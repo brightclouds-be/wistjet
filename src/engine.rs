@@ -2,6 +2,8 @@
 
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use chrono_tz::Tz;
+use rand::Rng;
+use rand::seq::SliceRandom;
 
 /// One box of a study system. `success` and `failure` are box positions (0-based).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,6 +17,14 @@ pub struct BoxRule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Progress {
     pub box_pos: usize,
+    pub due: NaiveDate,
+}
+
+/// A due card direction, as listed for a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DueItem {
+    pub card_id: i64,
+    pub direction: u8,
     pub due: NaiveDate,
 }
 
@@ -111,9 +121,39 @@ pub fn remap_positions(old_len: usize, origins: &[Option<usize>]) -> Vec<usize> 
         .collect()
 }
 
+/// Session order (§5.5): oldest due first, ties shuffled, and two directions of the
+/// same card never back to back when the due-date order allows avoiding it.
+// ponytail: O(n²) per due date, fine for hundreds of cards per session.
+pub fn order_session<R: Rng>(mut items: Vec<DueItem>, rng: &mut R) -> Vec<DueItem> {
+    items.shuffle(rng);
+    items.sort_by_key(|i| i.due); // stable: shuffled order survives within a day
+    let mut out: Vec<DueItem> = Vec::with_capacity(items.len());
+    let mut start = 0;
+    while start < items.len() {
+        let day = items[start].due;
+        let end = start + items[start..].iter().take_while(|i| i.due == day).count();
+        let mut group = items[start..end].to_vec();
+        while !group.is_empty() {
+            let last = out.last().map(|i| i.card_id);
+            let remaining = |card: i64| group.iter().filter(|i| i.card_id == card).count();
+            // Prefer a different card than the last one, and among those the card with
+            // most items left, so the final picks don't get stuck on one card.
+            let pick = (0..group.len())
+                .filter(|&k| Some(group[k].card_id) != last)
+                .max_by_key(|&k| (remaining(group[k].card_id), std::cmp::Reverse(k)))
+                .unwrap_or(0);
+            out.push(group.remove(pick));
+        }
+        start = end;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     fn d(s: &str) -> NaiveDate {
         s.parse().unwrap()
@@ -309,5 +349,60 @@ mod tests {
             remap_positions(2, &[None, None, None, None, None]),
             vec![0, 1]
         );
+    }
+
+    fn item(card_id: i64, direction: u8, due: &str) -> DueItem {
+        DueItem {
+            card_id,
+            direction,
+            due: d(due),
+        }
+    }
+
+    #[test]
+    fn session_is_oldest_due_first() {
+        let items = vec![
+            item(1, 0, "2026-10-10"),
+            item(2, 0, "2026-10-08"),
+            item(3, 0, "2026-10-09"),
+        ];
+        let out = order_session(items, &mut StdRng::seed_from_u64(1));
+        let ids: Vec<i64> = out.iter().map(|i| i.card_id).collect();
+        assert_eq!(ids, vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn session_shuffles_ties() {
+        let items: Vec<DueItem> = (1..=10).map(|c| item(c, 0, "2026-10-10")).collect();
+        let orders: std::collections::HashSet<Vec<i64>> = (0..20)
+            .map(|seed| {
+                order_session(items.clone(), &mut StdRng::seed_from_u64(seed))
+                    .iter()
+                    .map(|i| i.card_id)
+                    .collect()
+            })
+            .collect();
+        assert!(orders.len() > 1);
+    }
+
+    #[test]
+    fn session_never_puts_two_directions_of_a_card_back_to_back() {
+        let items: Vec<DueItem> = (1..=3)
+            .flat_map(|c| [item(c, 0, "2026-10-10"), item(c, 1, "2026-10-10")])
+            .collect();
+        for seed in 0..200 {
+            let out = order_session(items.clone(), &mut StdRng::seed_from_u64(seed));
+            assert_eq!(out.len(), 6);
+            for pair in out.windows(2) {
+                assert_ne!(pair[0].card_id, pair[1].card_id, "seed {seed}: {out:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn session_keeps_unavoidable_neighbours() {
+        let items = vec![item(1, 0, "2026-10-10"), item(1, 1, "2026-10-10")];
+        let out = order_session(items, &mut StdRng::seed_from_u64(0));
+        assert_eq!(out.len(), 2);
     }
 }
