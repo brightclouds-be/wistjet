@@ -6,6 +6,7 @@ use wistjet::store::{self, Answer, AnswerOutcome};
 
 const LOTTE: i64 = 1;
 const WOUT: i64 = 2;
+const DECK: i64 = 1;
 const CHAT: i64 = 1;
 const CHIEN: i64 = 2;
 
@@ -269,4 +270,47 @@ fn full_cycle_through_the_school_boxes() {
         );
         today = next;
     }
+}
+
+#[test]
+fn reset_one_child_on_one_deck() {
+    let mut conn = fixture();
+    answer(&mut conn, "a1", LOTTE, CHAT, 0, true, "2026-10-10");
+    answer(&mut conn, "a2", WOUT, CHAT, 0, true, "2026-10-10");
+    store::reset_progress(&conn, DECK, Some(LOTTE), d("2026-10-11")).unwrap();
+    assert_eq!(due(&conn, LOTTE, "2026-10-11"), vec![(CHAT, 0), (CHIEN, 0)]);
+    assert_eq!(due(&conn, WOUT, "2026-10-11"), vec![(CHIEN, 0)]);
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT box_position FROM progress WHERE child_id = 1"
+        ),
+        0
+    );
+    assert_eq!(count(&conn, "SELECT count(*) FROM review_log"), 2);
+}
+
+#[test]
+fn reset_whole_deck() {
+    let mut conn = fixture();
+    answer(&mut conn, "a1", LOTTE, CHAT, 0, true, "2026-10-10");
+    answer(&mut conn, "a2", WOUT, CHAT, 0, true, "2026-10-10");
+    store::reset_progress(&conn, DECK, None, d("2026-10-11")).unwrap();
+    assert_eq!(due(&conn, LOTTE, "2026-10-11"), vec![(CHAT, 0), (CHIEN, 0)]);
+    assert_eq!(due(&conn, WOUT, "2026-10-11"), vec![(CHAT, 0), (CHIEN, 0)]);
+}
+
+#[test]
+fn answer_after_same_day_reset_is_scheduling() {
+    let mut conn = fixture();
+    answer(&mut conn, "a1", LOTTE, CHAT, 0, true, "2026-10-10");
+    store::reset_progress(&conn, DECK, Some(LOTTE), d("2026-10-10")).unwrap();
+    let out = answer(&mut conn, "a2", LOTTE, CHAT, 0, false, "2026-10-10");
+    assert_eq!(
+        out,
+        AnswerOutcome::Scheduled(Progress {
+            box_pos: 0,
+            due: d("2026-10-11")
+        })
+    );
 }

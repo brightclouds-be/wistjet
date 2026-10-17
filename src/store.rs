@@ -169,3 +169,19 @@ pub fn record_answer(
     tx.commit()?;
     Ok(AnswerOutcome::Scheduled(next))
 }
+
+/// Resets a deck to the first box, due today (spec §5.7): one child, or all (`None`).
+/// Directions without a progress row are already in that state. The review log is kept.
+pub fn reset_progress(
+    conn: &Connection,
+    deck_id: i64,
+    child_id: Option<i64>,
+    today: NaiveDate,
+) -> Result<usize> {
+    conn.execute(
+        "UPDATE progress SET box_position = 0, due_date = ?3
+         WHERE card_id IN (SELECT id FROM card WHERE deck_id = ?1)
+           AND (?2 IS NULL OR child_id = ?2)",
+        params![deck_id, child_id, today],
+    )
+}
