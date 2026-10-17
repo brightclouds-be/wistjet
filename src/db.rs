@@ -28,11 +28,18 @@ pub fn open_in_memory() -> Result<Connection, OpenError> {
 }
 
 /// Checks the file is ours and not from a newer app, then migrates it to the latest schema.
+/// A rejected file is left exactly as it was: the checks only read.
 pub fn prepare(mut conn: Connection) -> Result<Connection, OpenError> {
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
     let version: usize = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     let app_id: i64 = conn.query_row("PRAGMA application_id", [], |r| r.get(0))?;
-    if version > 0 && app_id != APPLICATION_ID {
+    let tables: i64 = conn.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))?;
+    // An unversioned file is only ours to initialise if it is completely empty.
+    let ours = if version == 0 {
+        app_id == 0 && tables == 0
+    } else {
+        app_id == APPLICATION_ID
+    };
+    if !ours {
         return Err(OpenError::NotWistjet);
     }
     if version > MIGRATIONS.len() {
@@ -41,6 +48,7 @@ pub fn prepare(mut conn: Connection) -> Result<Connection, OpenError> {
             supported: MIGRATIONS.len(),
         });
     }
+    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;
@@ -103,5 +111,32 @@ mod tests {
         let result = open(&path);
         std::fs::remove_file(&path).unwrap();
         assert!(matches!(result, Err(OpenError::Sqlite(_))));
+    }
+
+    #[test]
+    fn rejects_foreign_database_without_user_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE notes (id INTEGER PRIMARY KEY);")
+            .unwrap();
+        assert!(matches!(prepare(conn), Err(OpenError::NotWistjet)));
+    }
+
+    #[test]
+    fn rejected_file_is_left_untouched() {
+        let path = std::env::temp_dir().join(format!("wistjet-foreign-{}.db", std::process::id()));
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA user_version = 3; CREATE TABLE notes (id INTEGER);")
+            .unwrap();
+        let result = open(&path);
+        let mode: String = Connection::open(&path)
+            .unwrap()
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        assert!(matches!(result, Err(OpenError::NotWistjet)));
+        assert_eq!(mode, "delete");
     }
 }

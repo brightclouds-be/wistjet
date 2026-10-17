@@ -314,3 +314,46 @@ fn answer_after_same_day_reset_is_scheduling() {
         })
     );
 }
+
+#[test]
+fn broken_study_system_is_an_error_not_a_panic() {
+    let broken = [
+        // no boxes
+        "INSERT INTO study_system (id, name) VALUES (2, 'Leeg')",
+        // target points past the last box
+        "INSERT INTO study_system (id, name) VALUES (2, 'Kapot');
+         INSERT INTO box VALUES (2, 0, 'Box 1', 1, 7, 0)",
+        // positions 0 and 2: targets would hit the wrong box
+        "INSERT INTO study_system (id, name) VALUES (2, 'Gat');
+         INSERT INTO box VALUES (2, 0, 'Box 1', 1, 1, 0), (2, 2, 'Box 2', 2, 1, 0)",
+    ];
+    for sql in broken {
+        let mut conn = fixture();
+        conn.execute_batch(sql).unwrap();
+        conn.execute_batch("UPDATE deck SET system_id = 2").unwrap();
+        let a = Answer {
+            id: "a1".into(),
+            child_id: LOTTE,
+            card_id: CHAT,
+            direction: 0,
+            known: true,
+        };
+        assert!(
+            store::record_answer(&mut conn, &a, now(), d("2026-10-10")).is_err(),
+            "{sql}"
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM review_log"), 0);
+    }
+}
+
+#[test]
+fn whole_deck_reset_keeps_progress_of_unassigned_children() {
+    let mut conn = fixture();
+    answer(&mut conn, "a1", WOUT, CHAT, 0, true, "2026-10-10");
+    conn.execute_batch("DELETE FROM deck_child WHERE child_id = 2")
+        .unwrap();
+    store::reset_progress(&conn, DECK, None, d("2026-10-11")).unwrap();
+    conn.execute_batch("INSERT INTO deck_child VALUES (1, 2)")
+        .unwrap();
+    assert_eq!(due(&conn, WOUT, "2026-10-11"), vec![(CHIEN, 0)]);
+}

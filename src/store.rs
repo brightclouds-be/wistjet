@@ -67,19 +67,35 @@ pub fn due_items(
     rows.collect()
 }
 
+/// Loads a study system's boxes. A malformed system (no boxes, a gap in positions, a
+/// target past the last box) is an error, so bad data can't panic the scheduler.
 pub fn load_boxes(conn: &Connection, system_id: i64) -> Result<Vec<BoxRule>> {
     let mut stmt = conn.prepare(
-        "SELECT interval_days, success_position, failure_position
+        "SELECT position, interval_days, success_position, failure_position
          FROM box WHERE system_id = ?1 ORDER BY position",
     )?;
     let rows = stmt.query_map([system_id], |r| {
-        Ok(BoxRule {
-            interval_days: r.get(0)?,
-            success: r.get(1)?,
-            failure: r.get(2)?,
-        })
+        Ok((
+            r.get::<_, usize>(0)?,
+            BoxRule {
+                interval_days: r.get(1)?,
+                success: r.get(2)?,
+                failure: r.get(3)?,
+            },
+        ))
     })?;
-    rows.collect()
+    let rows: Vec<(usize, BoxRule)> = rows.collect::<Result<_>>()?;
+    let contiguous = rows.iter().enumerate().all(|(i, (pos, _))| i == *pos);
+    let boxes: Vec<BoxRule> = rows.into_iter().map(|(_, b)| b).collect();
+    if !contiguous || engine::validate_system(&boxes).is_err() {
+        let msg = format!("study system {system_id} is malformed");
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Integer,
+            msg.into(),
+        ));
+    }
+    Ok(boxes)
 }
 
 /// Applies one answer (spec §5.3). Safe to call twice with the same `Answer::id`.
@@ -171,6 +187,7 @@ pub fn record_answer(
 }
 
 /// Resets a deck to the first box, due today (spec §5.7): one child, or all (`None`).
+/// Only assigned children are touched: an unassigned child's hidden progress is kept (§5.8).
 /// Directions without a progress row are already in that state. The review log is kept.
 pub fn reset_progress(
     conn: &Connection,
@@ -181,6 +198,7 @@ pub fn reset_progress(
     conn.execute(
         "UPDATE progress SET box_position = 0, due_date = ?3
          WHERE card_id IN (SELECT id FROM card WHERE deck_id = ?1)
+           AND child_id IN (SELECT child_id FROM deck_child WHERE deck_id = ?1)
            AND (?2 IS NULL OR child_id = ?2)",
         params![deck_id, child_id, today],
     )
