@@ -1,6 +1,7 @@
 //! Pure scheduling rules (spec §5). No database, no clock: callers pass `today`.
 
-use chrono::{Days, NaiveDate};
+use chrono::{DateTime, Days, NaiveDate, Utc};
+use chrono_tz::Tz;
 
 /// One box of a study system. `success` and `failure` are box positions (0-based).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +44,11 @@ pub fn school_four_box() -> Vec<BoxRule> {
     ]
 }
 
+/// The family's calendar day at instant `now` (spec §5: days are local calendar days).
+pub fn local_today(tz: Tz, now: DateTime<Utc>) -> NaiveDate {
+    now.with_timezone(&tz).date_naive()
+}
+
 /// A card direction never reviewed starts in the first box, due today (§5.1).
 pub fn new_progress(today: NaiveDate) -> Progress {
     Progress {
@@ -71,6 +77,10 @@ mod tests {
     use super::*;
 
     fn d(s: &str) -> NaiveDate {
+        s.parse().unwrap()
+    }
+
+    fn utc(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()
     }
 
@@ -157,5 +167,53 @@ mod tests {
     fn stale_box_position_is_clamped_to_last_box() {
         let b = school_four_box();
         assert_eq!(schedule(&b, 9, true, d("2026-10-10")).box_pos, 3);
+    }
+
+    #[test]
+    fn local_today_near_midnight_in_brussels() {
+        let tz: Tz = "Europe/Brussels".parse().unwrap();
+        // CEST = UTC+2
+        assert_eq!(
+            local_today(tz, utc("2026-10-10T21:59:59Z")),
+            d("2026-10-10")
+        );
+        assert_eq!(
+            local_today(tz, utc("2026-10-10T22:00:00Z")),
+            d("2026-10-11")
+        );
+    }
+
+    #[test]
+    fn local_today_across_dst_transitions() {
+        let tz: Tz = "Europe/Brussels".parse().unwrap();
+        // Spring forward 2026-03-29 01:00 UTC; before it Brussels is UTC+1.
+        assert_eq!(
+            local_today(tz, utc("2026-03-28T22:59:59Z")),
+            d("2026-03-28")
+        );
+        assert_eq!(
+            local_today(tz, utc("2026-03-28T23:00:00Z")),
+            d("2026-03-29")
+        );
+        // Fall back 2026-10-25 01:00 UTC; before it Brussels is UTC+2.
+        assert_eq!(
+            local_today(tz, utc("2026-10-24T21:59:59Z")),
+            d("2026-10-24")
+        );
+        assert_eq!(
+            local_today(tz, utc("2026-10-24T22:00:00Z")),
+            d("2026-10-25")
+        );
+        assert_eq!(
+            local_today(tz, utc("2026-10-25T22:59:59Z")),
+            d("2026-10-25")
+        );
+    }
+
+    #[test]
+    fn intervals_count_calendar_days_across_dst() {
+        let b = school_four_box();
+        // 7 days from the day before spring-forward is exactly one calendar week.
+        assert_eq!(schedule(&b, 1, true, d("2026-03-28")).due, d("2026-04-04"));
     }
 }
