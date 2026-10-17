@@ -18,6 +18,13 @@ pub struct Progress {
     pub due: NaiveDate,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SystemError {
+    NoBoxes,
+    BadInterval { box_pos: usize },
+    BadTarget { box_pos: usize },
+}
+
 /// The built-in "School 4-box" preset.
 pub fn school_four_box() -> Vec<BoxRule> {
     vec![
@@ -70,6 +77,38 @@ pub fn schedule(boxes: &[BoxRule], current: usize, known: bool, today: NaiveDate
         box_pos,
         due: today + Days::new(interval.into()),
     }
+}
+
+/// Rules a study system must satisfy before it is saved (§5.6, §8).
+pub fn validate_system(boxes: &[BoxRule]) -> Result<(), SystemError> {
+    if boxes.is_empty() {
+        return Err(SystemError::NoBoxes);
+    }
+    for (box_pos, b) in boxes.iter().enumerate() {
+        if !(1..=365).contains(&b.interval_days) {
+            return Err(SystemError::BadInterval { box_pos });
+        }
+        if b.success >= boxes.len() || b.failure >= boxes.len() {
+            return Err(SystemError::BadTarget { box_pos });
+        }
+    }
+    Ok(())
+}
+
+/// Maps every old box position to a new one (§5.6).
+/// `origins[i]` is the old position the new box `i` came from (`None` = new box).
+/// Kept boxes follow their box; a removed box's progress goes to the box now at the
+/// same position, or the last box. Switching systems = all origins `None`.
+pub fn remap_positions(old_len: usize, origins: &[Option<usize>]) -> Vec<usize> {
+    let last = origins.len() - 1;
+    (0..old_len)
+        .map(|old| {
+            origins
+                .iter()
+                .position(|o| *o == Some(old))
+                .unwrap_or(old.min(last))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -215,5 +254,60 @@ mod tests {
         let b = school_four_box();
         // 7 days from the day before spring-forward is exactly one calendar week.
         assert_eq!(schedule(&b, 1, true, d("2026-03-28")).due, d("2026-04-04"));
+    }
+
+    #[test]
+    fn validate_system_rules() {
+        assert_eq!(validate_system(&[]), Err(SystemError::NoBoxes));
+        assert_eq!(validate_system(&school_four_box()), Ok(()));
+        let bad_target = [BoxRule {
+            interval_days: 1,
+            success: 1,
+            failure: 0,
+        }];
+        assert_eq!(
+            validate_system(&bad_target),
+            Err(SystemError::BadTarget { box_pos: 0 })
+        );
+        for interval_days in [0, 366] {
+            let bad = [BoxRule {
+                interval_days,
+                success: 0,
+                failure: 0,
+            }];
+            assert_eq!(
+                validate_system(&bad),
+                Err(SystemError::BadInterval { box_pos: 0 })
+            );
+        }
+    }
+
+    #[test]
+    fn remap_when_a_middle_box_is_removed() {
+        // Old boxes 0,1,2,3; box 1 removed → new list came from [0, 2, 3].
+        let map = remap_positions(4, &[Some(0), Some(2), Some(3)]);
+        // Box 1's progress goes to the box now at position 1 (old box 2).
+        assert_eq!(map, vec![0, 1, 1, 2]);
+    }
+
+    #[test]
+    fn remap_when_the_last_box_is_removed() {
+        let map = remap_positions(4, &[Some(0), Some(1), Some(2)]);
+        assert_eq!(map, vec![0, 1, 2, 2]);
+    }
+
+    #[test]
+    fn remap_follows_reordered_boxes() {
+        let map = remap_positions(2, &[Some(1), Some(0)]);
+        assert_eq!(map, vec![1, 0]);
+    }
+
+    #[test]
+    fn remap_on_system_switch_uses_position_then_last_box() {
+        assert_eq!(remap_positions(4, &[None, None]), vec![0, 1, 1, 1]);
+        assert_eq!(
+            remap_positions(2, &[None, None, None, None, None]),
+            vec![0, 1]
+        );
     }
 }
