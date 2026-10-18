@@ -4,7 +4,7 @@
 use crate::auth::{self, Auth, Login};
 use crate::family::{self, Setup, SetupError};
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -37,6 +37,11 @@ impl AppState {
     }
 }
 
+#[derive(rust_embed::Embed)]
+#[folder = "web/dist/"]
+#[allow_missing = true]
+struct Assets;
+
 pub fn router(state: Shared) -> Router {
     let parent = Router::new()
         .route("/session", get(|| async { StatusCode::NO_CONTENT }))
@@ -52,6 +57,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/parent/login", post(login))
         .route("/api/parent/logout", post(logout))
         .nest("/api/parent", parent)
+        .fallback(static_file)
         .with_state(state)
 }
 
@@ -170,4 +176,20 @@ async fn logout(State(s): State<Shared>, headers: HeaderMap) -> Response {
         )],
     )
         .into_response()
+}
+
+/// Serves the embedded web app; unknown non-API paths get `index.html`.
+async fn static_file(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    if path.starts_with("api/") {
+        return error(StatusCode::NOT_FOUND, "not_found");
+    }
+    match Assets::get(path).or_else(|| Assets::get("index.html")) {
+        Some(file) => (
+            [(header::CONTENT_TYPE, file.metadata.mimetype().to_string())],
+            file.data,
+        )
+            .into_response(),
+        None => error(StatusCode::NOT_FOUND, "not_found"),
+    }
 }

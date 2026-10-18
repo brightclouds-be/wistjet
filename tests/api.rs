@@ -204,3 +204,14 @@ async fn unknown_api_path_is_not_found() {
     let r = call(&app, "GET", "/api/nope", None, None).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
 }
+
+/// Needs the built web app: run `npm --prefix web run build` first.
+#[tokio::test]
+async fn web_app_is_served_for_non_api_paths() {
+    let app = app();
+    for path in ["/", "/index.html", "/some/client/route"] {
+        let r = call(&app, "GET", path, None, None).await;
+        assert_eq!(r.status, StatusCode::OK, "{path}");
+        assert!(r.content_type.starts_with("text/html"), "{path}");
+    }
+}
