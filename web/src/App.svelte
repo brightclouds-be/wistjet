@@ -4,7 +4,7 @@
   import Profiles from './routes/Profiles.svelte'
   import Setup from './routes/Setup.svelte'
 
-  type Status = { setup_done: boolean; setup_code_required: boolean; lan_url: string }
+  type Status = { setup_done: boolean; lan_url: string }
 
   let status = $state<Status | null>(null)
   let failed = $state(false)
@@ -36,7 +36,7 @@
   {:else if !status}
     <p class="notice">Laden…</p>
   {:else if !status.setup_done}
-    <Setup lanUrl={status.lan_url} codeRequired={status.setup_code_required} onDone={load} />
+    <Setup lanUrl={status.lan_url} onDone={load} />
   {:else if route === '#/ouder'}
     <Parent />
   {:else}

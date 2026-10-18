@@ -89,23 +89,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| local.clone());
 
     let set_up = wistjet::family::is_set_up(&conn)?;
-    let state = server::AppState::new(conn, lan_url.clone(), config.hosts);
+    let setup_code = format!("{:06}", rand::random_range(0..1_000_000));
+    // Until setup is done, the browser opened here gets the code in its URL; any other
+    // device needs it typed in from this window (or `docker logs`).
+    let start_url = if set_up {
+        local.clone()
+    } else {
+        format!("{local}/#setup={setup_code}")
+    };
 
     println!("Wistjet draait.");
     println!("  Op deze computer:  {local}");
     println!("  Op een tablet:     {lan_url}");
     println!("  Gegevens:          {}", data_dir.display());
     if !set_up {
-        println!(
-            "  Instelcode:        {} (alleen nodig om in te stellen vanaf een ander toestel)",
-            state.setup_code
-        );
+        println!("  Instelcode:        {setup_code}");
     }
     println!("Sluit dit venster om Wistjet te stoppen.");
     if config.open_browser {
-        let _ = open::that(&local);
+        let _ = open::that(&start_url);
     }
-    let app = server::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let state = server::AppState::new(conn, lan_url, config.hosts, setup_code);
+    let app = server::router(state);
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -189,8 +194,7 @@ mod tests {
             .await
             .unwrap();
         let port = listener.local_addr().unwrap().port();
-        let app = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         port
     }
 
@@ -201,6 +205,7 @@ mod tests {
             conn,
             String::new(),
             vec![],
+            "123456".into(),
         )))
         .await;
         assert!(is_wistjet(port).await);

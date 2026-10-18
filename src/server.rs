@@ -4,7 +4,7 @@
 
 use crate::auth::{self, Auth, Login};
 use crate::family::{self, Setup, SetupError};
-use axum::extract::{ConnectInfo, Request, State};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -13,13 +13,12 @@ use axum::{Json, Router};
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::json;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const COOKIE: &str = "wistjet_parent";
-/// Wrong setup codes from other devices before setup from them is closed until restart.
+/// Wrong setup codes before setup is closed until restart (a restart prints a new code).
 const MAX_SETUP_CODE_FAILURES: u32 = 10;
 
 // ponytail: one connection behind a mutex; one family's traffic is tiny.
@@ -30,21 +29,27 @@ pub struct AppState {
     pub lan_url: String,
     /// Extra host names to accept besides IPs, `localhost`, single-label and `.local` names.
     allowed_hosts: Vec<String>,
-    /// Six digits printed in the console; needed to finish setup from another device.
-    pub setup_code: String,
+    /// Six digits printed in the console and put in the URL the launcher opens;
+    /// needed to finish first-run setup, so nobody else on the network can claim the PIN.
+    setup_code: String,
     setup_code_failures: AtomicU32,
 }
 
 pub type Shared = Arc<AppState>;
 
 impl AppState {
-    pub fn new(db: Connection, lan_url: String, allowed_hosts: Vec<String>) -> Shared {
+    pub fn new(
+        db: Connection,
+        lan_url: String,
+        allowed_hosts: Vec<String>,
+        setup_code: String,
+    ) -> Shared {
         Arc::new(AppState {
             db: Mutex::new(db),
             auth: Mutex::new(Auth::default()),
             lan_url,
             allowed_hosts,
-            setup_code: format!("{:06}", rand::random_range(0..1_000_000)),
+            setup_code,
             setup_code_failures: AtomicU32::new(0),
         })
     }
@@ -100,24 +105,22 @@ pub fn host_allowed(host: &str, extra: &[String]) -> bool {
 }
 
 async fn check_host(State(s): State<Shared>, req: Request, next: Next) -> Response {
-    let host = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok());
-    match host {
-        Some(h) if !host_allowed(h, &s.allowed_hosts) => (
+    // No Host header at all is fine (browsers always send one); a present one must pass.
+    let refused = req.headers().get(header::HOST).map(|h| match h.to_str() {
+        Ok(h) if host_allowed(h, &s.allowed_hosts) => None,
+        Ok(h) => Some(h.to_string()),
+        Err(_) => Some("(onleesbaar)".to_string()),
+    });
+    match refused.flatten() {
+        Some(h) => (
             StatusCode::FORBIDDEN,
             format!(
                 "Wistjet weigert de naam {h}. Gebruik het IP-adres, of voeg de naam toe aan WISTJET_HOSTS."
             ),
         )
             .into_response(),
-        _ => next.run(req).await,
+        None => next.run(req).await,
     }
-}
-
-fn is_local(peer: SocketAddr) -> bool {
-    peer.ip().to_canonical().is_loopback()
 }
 
 fn error(status: StatusCode, code: &str) -> Response {
@@ -148,14 +151,9 @@ async fn require_parent(State(s): State<Shared>, req: Request, next: Next) -> Re
     }
 }
 
-async fn status(State(s): State<Shared>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+async fn status(State(s): State<Shared>) -> Response {
     match family::is_set_up(&s.db.lock().unwrap()) {
-        Ok(done) => Json(json!({
-            "setup_done": done,
-            "setup_code_required": !done && !is_local(peer),
-            "lan_url": s.lan_url,
-        }))
-        .into_response(),
+        Ok(done) => Json(json!({ "setup_done": done, "lan_url": s.lan_url })).into_response(),
         Err(e) => internal(e),
     }
 }
@@ -168,21 +166,20 @@ struct SetupRequest {
     setup_code: String,
 }
 
-async fn setup(
-    State(s): State<Shared>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    Json(body): Json<SetupRequest>,
-) -> Response {
-    // Setup from the computer Wistjet runs on is trusted; anything else needs the
-    // code from the console, so nobody else on the network can claim the PIN first.
-    if !is_local(peer) {
-        if s.setup_code_failures.load(Ordering::SeqCst) >= MAX_SETUP_CODE_FAILURES {
-            return error(StatusCode::FORBIDDEN, "setup_code_locked");
-        }
-        if body.setup_code != s.setup_code {
-            s.setup_code_failures.fetch_add(1, Ordering::SeqCst);
-            return error(StatusCode::FORBIDDEN, "setup_code");
-        }
+async fn setup(State(s): State<Shared>, Json(body): Json<SetupRequest>) -> Response {
+    // Required from every device: behind a reverse proxy every visitor looks local.
+    if s.setup_code_failures.load(Ordering::SeqCst) >= MAX_SETUP_CODE_FAILURES {
+        return error(StatusCode::FORBIDDEN, "setup_code_locked");
+    }
+    if body.setup_code != s.setup_code {
+        // Counting and checking in one step keeps concurrent guesses within the cap.
+        let before = s.setup_code_failures.fetch_add(1, Ordering::SeqCst);
+        let code = if before + 1 >= MAX_SETUP_CODE_FAILURES {
+            "setup_code_locked"
+        } else {
+            "setup_code"
+        };
+        return error(StatusCode::FORBIDDEN, code);
     }
     match family::create(&mut s.db.lock().unwrap(), &body.setup) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

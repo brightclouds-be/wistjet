@@ -27,6 +27,7 @@ fn app_and_state() -> (Router, server::Shared) {
         conn,
         "http://192.168.1.23:8080".into(),
         vec!["wistjet.thuis".into()],
+        SETUP_CODE.into(),
     );
     (server::router(state.clone()), state)
 }
@@ -35,7 +36,10 @@ fn app() -> Router {
     app_and_state().0
 }
 
+const SETUP_CODE: &str = "123456";
+
 /// Where a request comes from: the peer address and the `Host` header.
+#[derive(Clone, Copy)]
 struct From<'a> {
     peer: &'a str,
     host: Option<&'a str>,
@@ -109,7 +113,8 @@ fn setup_body() -> Value {
         "pin": "2468",
         "child_name": "Lotte",
         "child_avatar": "#e57373",
-        "sample_deck": true
+        "sample_deck": true,
+        "setup_code": SETUP_CODE
     })
 }
 
@@ -140,7 +145,7 @@ async fn status_reports_setup_and_lan_url() {
     let r = call(&app, "GET", "/api/status", None, None).await;
     assert_eq!(
         r.json(),
-        json!({ "setup_done": false, "setup_code_required": false, "lan_url": "http://192.168.1.23:8080" })
+        json!({ "setup_done": false, "lan_url": "http://192.168.1.23:8080" })
     );
     set_up(&app).await;
     let r = call(&app, "GET", "/api/status", None, None).await;
@@ -291,45 +296,47 @@ async fn home_network_host_names_are_accepted() {
 }
 
 #[tokio::test]
-async fn setup_from_another_device_needs_the_code() {
-    let (app, state) = app_and_state();
-    let r = send(&app, TABLET, "GET", "/api/status", None, None).await;
-    assert_eq!(r.json()["setup_code_required"], json!(true));
-    let r = send(&app, LOCAL, "GET", "/api/status", None, None).await;
-    assert_eq!(r.json()["setup_code_required"], json!(false));
-
-    let r = send(&app, TABLET, "POST", "/api/setup", None, Some(setup_body())).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-    assert_eq!(r.json(), json!({ "error": "setup_code" }));
-
-    let mut body = setup_body();
-    body["setup_code"] = json!(state.setup_code.clone());
-    let r = send(&app, TABLET, "POST", "/api/setup", None, Some(body)).await;
-    assert_eq!(r.status, StatusCode::NO_CONTENT);
-    let r = send(&app, TABLET, "GET", "/api/status", None, None).await;
-    assert_eq!(r.json()["setup_code_required"], json!(false));
+async fn setup_needs_the_code_from_every_device() {
+    // Also from this computer: a reverse proxy on the same machine makes every
+    // visitor look local, so a local address proves nothing.
+    for from in [LOCAL, TABLET] {
+        let app = app();
+        let mut body = setup_body();
+        body["setup_code"] = json!("");
+        let r = send(&app, from, "POST", "/api/setup", None, Some(body)).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        assert_eq!(r.json(), json!({ "error": "setup_code" }));
+        let r = send(&app, from, "POST", "/api/setup", None, Some(setup_body())).await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+    }
 }
 
 #[tokio::test]
-async fn ten_wrong_setup_codes_close_setup_from_other_devices() {
-    let (app, state) = app_and_state();
-    let wrong = if state.setup_code == "000000" {
-        "111111"
-    } else {
-        "000000"
-    };
+async fn host_header_that_is_not_text_is_refused() {
+    let req = Request::builder()
+        .uri("/api/status")
+        .header(
+            header::HOST,
+            header::HeaderValue::from_bytes(b"\xe9vil.example").unwrap(),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let res = app().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn ten_wrong_setup_codes_close_setup_until_restart() {
+    let app = app();
     for _ in 0..10 {
         let mut body = setup_body();
-        body["setup_code"] = json!(wrong);
+        body["setup_code"] = json!("000000");
         let r = send(&app, TABLET, "POST", "/api/setup", None, Some(body)).await;
         assert_eq!(r.status, StatusCode::FORBIDDEN);
     }
-    let mut body = setup_body();
-    body["setup_code"] = json!(state.setup_code.clone());
-    let r = send(&app, TABLET, "POST", "/api/setup", None, Some(body)).await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN);
-    assert_eq!(r.json(), json!({ "error": "setup_code_locked" }));
-    // The computer Wistjet runs on can still finish setup.
-    let r = send(&app, LOCAL, "POST", "/api/setup", None, Some(setup_body())).await;
-    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    for from in [TABLET, LOCAL] {
+        let r = send(&app, from, "POST", "/api/setup", None, Some(setup_body())).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        assert_eq!(r.json(), json!({ "error": "setup_code_locked" }));
+    }
 }
