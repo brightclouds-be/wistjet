@@ -2,7 +2,7 @@
   import { api } from '../lib/api'
   import { initial } from '../lib/text'
 
-  type Child = { id: number; name: string; avatar: string }
+  type Child = { id: number; name: string; avatar: string; due: number }
 
   const children = api<Child[]>('children')
 </script>
@@ -17,9 +17,16 @@
 {:then list}
   <ul class="tiles">
     {#each list as child (child.id)}
-      <li class="tile">
-        <span class="avatar" style:background={child.avatar}>{initial(child.name)}</span>
-        <span class="tile-name">{child.name}</span>
+      <li>
+        <a class="tile" href="#/kind/{child.id}">
+          <span class="avatar" style:background={child.avatar}>{initial(child.name)}</span>
+          <span class="tile-name">{child.name}</span>
+          {#if child.due > 0}
+            <span class="badge" aria-label="{child.due} kaartjes te oefenen">{child.due}</span>
+          {:else}
+            <span class="badge done" aria-label="Klaar voor vandaag">✓</span>
+          {/if}
+        </a>
       </li>
     {/each}
   </ul>

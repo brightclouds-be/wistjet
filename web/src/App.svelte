@@ -1,14 +1,18 @@
 <script lang="ts">
   import { api } from './lib/api'
+  import ChildHome from './routes/ChildHome.svelte'
   import Parent from './routes/Parent.svelte'
   import Profiles from './routes/Profiles.svelte'
   import Setup from './routes/Setup.svelte'
+  import Study from './routes/Study.svelte'
 
   type Status = { setup_done: boolean; lan_url: string }
 
   let status = $state<Status | null>(null)
   let failed = $state(false)
   let route = $state(location.hash)
+  // #/kind/<child>, #/kind/<child>/oefenen, #/kind/<child>/oefenen/<subject>
+  const child = $derived(route.match(/^#\/kind\/(\d+)(\/oefenen(?:\/(\d+))?)?$/))
 
   $effect(() => {
     const onHash = () => (route = location.hash)
@@ -39,6 +43,10 @@
     <Setup lanUrl={status.lan_url} onDone={load} />
   {:else if route === '#/ouder'}
     <Parent />
+  {:else if child?.[2]}
+    {#key route}<Study childId={Number(child[1])} subject={child[3] ? Number(child[3]) : null} />{/key}
+  {:else if child}
+    {#key route}<ChildHome childId={Number(child[1])} />{/key}
   {:else}
     <Profiles />
   {/if}
