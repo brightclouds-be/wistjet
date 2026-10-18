@@ -158,6 +158,16 @@ async fn status(State(s): State<Shared>) -> Response {
     }
 }
 
+/// Takes the next setup-code attempt, or `None` once the cap is reached. Locked
+/// requests don't count, so the counter can never wrap around to zero.
+fn take_attempt(counter: &AtomicU32) -> Option<u32> {
+    counter
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            (n < MAX_SETUP_CODE_FAILURES).then_some(n + 1)
+        })
+        .ok()
+}
+
 #[derive(Deserialize)]
 struct SetupRequest {
     #[serde(flatten)]
@@ -171,10 +181,9 @@ async fn setup(State(s): State<Shared>, Json(body): Json<SetupRequest>) -> Respo
     // Each request takes a numbered attempt *before* the code is compared, so a burst of
     // simultaneous guesses cannot slip past the cap. A right code gives its attempt back;
     // a wrong one keeps it, so at most MAX_SETUP_CODE_FAILURES wrong codes are ever tried.
-    let attempt = s.setup_code_failures.fetch_add(1, Ordering::SeqCst);
-    if attempt >= MAX_SETUP_CODE_FAILURES {
+    let Some(attempt) = take_attempt(&s.setup_code_failures) else {
         return error(StatusCode::FORBIDDEN, "setup_code_locked");
-    }
+    };
     if body.setup_code != s.setup_code {
         let code = if attempt + 1 >= MAX_SETUP_CODE_FAILURES {
             "setup_code_locked"
@@ -317,5 +326,18 @@ mod tests {
         let listed = ["wistjet.thuis".to_string()];
         assert!(host_allowed("Wistjet.Thuis:443", &listed));
         assert!(!host_allowed("evil.example", &listed));
+    }
+
+    #[test]
+    fn attempts_stop_counting_at_the_cap() {
+        let counter = AtomicU32::new(0);
+        for n in 0..MAX_SETUP_CODE_FAILURES {
+            assert_eq!(take_attempt(&counter), Some(n));
+        }
+        for _ in 0..3 {
+            assert_eq!(take_attempt(&counter), None);
+        }
+        // Locked requests must not keep counting: a counter that grows can wrap to 0.
+        assert_eq!(counter.load(Ordering::SeqCst), MAX_SETUP_CODE_FAILURES);
     }
 }
