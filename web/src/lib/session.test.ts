@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answer, newId, start, type StudyCard } from './session.ts'
+import { answer, newId, skip, start, type StudyCard } from './session.ts'
 
 function card(card_id: number, repeat_missed = true): StudyCard {
   const side = { text: `kaart ${card_id}`, image: null }
@@ -56,4 +56,14 @@ test('new ids are 32 hex characters and differ', () => {
   const a = newId()
   assert.match(a, /^[0-9a-f]{32}$/)
   assert.notEqual(a, newId())
+})
+
+test('a card the server no longer has is skipped without counting', () => {
+  let q = start([card(1), card(2)], ids)
+  q = skip(q)
+  assert.equal(q.index, 1)
+  assert.equal(q.turns[q.index].card.card_id, 2)
+  assert.deepEqual(q.summary, { known: 0, notKnown: 0, repeats: 0 })
+  q = skip(skip(q))
+  assert.equal(q.index, 2)
 })

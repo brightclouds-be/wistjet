@@ -52,3 +52,9 @@ export function answer(q: Queue, known: boolean): Queue {
     summary: s,
   }
 }
+
+/** The queue without the current turn, uncounted: the server no longer has the card for
+ *  this child (archived or unassigned meanwhile), so its answer can never be saved. */
+export function skip(q: Queue): Queue {
+  return q.index < q.turns.length ? { ...q, index: q.index + 1 } : q
+}
