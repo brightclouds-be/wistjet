@@ -66,6 +66,7 @@ struct Assets;
 pub fn router(state: Shared) -> Router {
     let parent = Router::new()
         .route("/session", get(|| async { StatusCode::NO_CONTENT }))
+        .merge(crate::parent_api::routes())
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_parent,
@@ -130,11 +131,11 @@ async fn check_host(State(s): State<Shared>, req: Request, next: Next) -> Respon
     }
 }
 
-fn error(status: StatusCode, code: &str) -> Response {
+pub(crate) fn error(status: StatusCode, code: &str) -> Response {
     (status, Json(json!({ "error": code }))).into_response()
 }
 
-fn internal(e: impl std::fmt::Display) -> Response {
+pub(crate) fn internal(e: impl std::fmt::Display) -> Response {
     eprintln!("internal error: {e}");
     error(StatusCode::INTERNAL_SERVER_ERROR, "internal")
 }
@@ -213,7 +214,7 @@ async fn setup(State(s): State<Shared>, Json(body): Json<SetupRequest>) -> Respo
 }
 
 /// The family's calendar day right now; `None` before setup.
-fn today(conn: &Connection) -> rusqlite::Result<Option<NaiveDate>> {
+pub(crate) fn today(conn: &Connection) -> rusqlite::Result<Option<NaiveDate>> {
     Ok(family::timezone(conn)?.map(|tz| engine::local_today(tz, Utc::now())))
 }
 

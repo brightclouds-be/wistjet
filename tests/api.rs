@@ -497,3 +497,257 @@ async fn card_images_are_served_with_their_type() {
     let r = call(&app, "GET", "/api/images/2", None, None).await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
 }
+
+// ---- parent content management (Plan 4a) ----
+
+/// A set-up family with a logged-in parent: (router, cookie).
+async fn parent() -> (Router, String) {
+    let app = app();
+    set_up(&app).await;
+    let cookie = log_in(&app).await;
+    (app, cookie)
+}
+
+#[tokio::test]
+async fn content_routes_need_a_parent_session() {
+    let app = app();
+    set_up(&app).await;
+    let routes = [
+        ("GET", "/api/parent/children"),
+        ("POST", "/api/parent/children"),
+        ("PUT", "/api/parent/children/1"),
+        ("GET", "/api/parent/subjects"),
+        ("GET", "/api/parent/systems"),
+        ("GET", "/api/parent/decks"),
+        ("PUT", "/api/parent/decks/1"),
+        ("GET", "/api/parent/decks/1/cards"),
+        ("POST", "/api/parent/decks/1/cards"),
+        ("GET", "/api/parent/decks/1/progress"),
+        ("POST", "/api/parent/decks/1/reset"),
+        ("PUT", "/api/parent/cards/1"),
+        ("POST", "/api/parent/images"),
+    ];
+    for (method, path) in routes {
+        let r = call(&app, method, path, None, Some(json!({}))).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn parent_adds_renames_and_archives_a_child() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/children",
+        Some(&c),
+        Some(json!({ "name": "Wout", "avatar": "#4fc3f7" })),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()),
+        (StatusCode::CREATED, json!({ "id": 2 }))
+    );
+    let body = json!({ "name": "Wouter", "avatar": "#4fc3f7", "archived": true });
+    let r = call(&app, "PUT", "/api/parent/children/2", Some(&c), Some(body)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/children", Some(&c), None).await;
+    assert_eq!(
+        r.json()[1],
+        json!({ "id": 2, "name": "Wouter", "avatar": "#4fc3f7", "archived": true })
+    );
+    // Archived children are gone from the profile screen.
+    let r = call(&app, "GET", "/api/children", None, None).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn invalid_content_names_the_field() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/children",
+        Some(&c),
+        Some(json!({ "name": "Wout", "avatar": "blue" })),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "invalid", "field": "avatar" })
+        )
+    );
+    let r = call(
+        &app,
+        "PUT",
+        "/api/parent/children/99",
+        Some(&c),
+        Some(json!({ "name": "X", "avatar": "#4fc3f7" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn parent_builds_a_deck_with_cards() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/subjects",
+        Some(&c),
+        Some(json!({ "name": "Wiskunde" })),
+    )
+    .await;
+    let subject = r.json()["id"].clone();
+    let deck = json!({ "name": "Tafels", "subject_id": subject, "system_id": 1, "direction_mode": "both", "children": [1] });
+    let r = call(&app, "POST", "/api/parent/decks", Some(&c), Some(deck)).await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let deck_id = r.json()["id"].as_i64().unwrap();
+
+    let cards = json!([
+        { "front_text": "3 x 4", "back_text": "12", "notes": "Denk aan 4 + 4 + 4" },
+        { "front_text": "6 x 7", "back_text": "42" }
+    ]);
+    let path = format!("/api/parent/decks/{deck_id}/cards");
+    let r = call(&app, "POST", &path, Some(&c), Some(cards)).await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let first = r.json()["ids"][0].as_i64().unwrap();
+
+    let off = json!({ "front_text": "3 x 4", "back_text": "12", "active": false });
+    let r = call(
+        &app,
+        "PUT",
+        &format!("/api/parent/cards/{first}"),
+        Some(&c),
+        Some(off),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+
+    let r = call(&app, "GET", &path, Some(&c), None).await;
+    assert_eq!(r.json()[0]["active"], json!(false));
+    let r = call(&app, "GET", "/api/parent/decks", Some(&c), None).await;
+    let tafels = r
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["id"] == deck_id)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (tafels["cards"].clone(), tafels["children"].clone()),
+        (json!(1), json!([1]))
+    );
+    // Both directions of the one active card are now due for Lotte, next to the 10 sample cards.
+    let r = call(&app, "GET", "/api/children/1/home", None, None).await;
+    assert_eq!(r.json()["due"], json!(12));
+}
+
+#[tokio::test]
+async fn a_bad_pasted_line_saves_nothing() {
+    let (app, c) = parent().await;
+    let cards = json!([{ "front_text": "un", "back_text": "een" }, { "front_text": "deux", "back_text": " " }]);
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/decks/1/cards",
+        Some(&c),
+        Some(cards),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()["field"].clone()),
+        (StatusCode::BAD_REQUEST, json!("back"))
+    );
+    let r = call(&app, "GET", "/api/parent/decks/1/cards", Some(&c), None).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 10);
+}
+
+async fn upload(app: &Router, cookie: &str, bytes: Vec<u8>) -> Reply {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/parent/images")
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .body(Body::from(bytes))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    Reply {
+        status: res.status(),
+        cookie: None,
+        content_type: String::new(),
+        body: res.into_body().collect().await.unwrap().to_bytes().to_vec(),
+    }
+}
+
+#[tokio::test]
+async fn images_upload_and_show_on_a_card() {
+    let (app, c) = parent().await;
+    let png = b"\x89PNG\r\n\x1a\nnot really a picture".to_vec();
+    let r = upload(&app, &c, png.clone()).await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let id = r.json()["id"].as_i64().unwrap();
+    let card = json!({ "front_text": "", "front_image": id, "back_text": "de kat" });
+    let r = call(&app, "PUT", "/api/parent/cards/1", Some(&c), Some(card)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", &format!("/api/images/{id}"), None, None).await;
+    assert_eq!((r.content_type.as_str(), r.body), ("image/png", png));
+
+    let r = upload(&app, &c, b"<svg onload=alert(1)>".to_vec()).await;
+    assert_eq!(
+        r.json(),
+        json!({ "error": "invalid", "field": "image_type" })
+    );
+    let mut big = b"\x89PNG\r\n\x1a\n".to_vec();
+    big.resize(5 * 1024 * 1024 + 1, 0);
+    let r = upload(&app, &c, big).await;
+    assert_eq!(
+        r.json(),
+        json!({ "error": "invalid", "field": "image_size" })
+    );
+}
+
+#[tokio::test]
+async fn deck_progress_and_reset() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/answers",
+        None,
+        Some(answer_body("a1", 1)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/decks/1/progress", Some(&c), None).await;
+    assert_eq!(
+        r.json(),
+        json!([{ "child_id": 1, "name": "Lotte", "due": 9, "boxes": [9, 1, 0, 0] }])
+    );
+
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/decks/1/reset",
+        Some(&c),
+        Some(json!({ "child_id": 1 })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/decks/1/progress", Some(&c), None).await;
+    assert_eq!(r.json()[0]["boxes"], json!([10, 0, 0, 0]));
+
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/decks/99/reset",
+        Some(&c),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
