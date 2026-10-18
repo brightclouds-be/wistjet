@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+argon2 = "0.5"
 chrono = "0.4"
 chrono-tz = "0.10"
 rand = "0.9"
 rusqlite = { version = "0.37", features = ["bundled", "chrono"] }
+
+# Argon2 is unusably slow unoptimised; keep PIN tests fast in debug builds.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
