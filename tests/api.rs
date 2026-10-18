@@ -668,11 +668,15 @@ async fn a_bad_pasted_line_saves_nothing() {
 }
 
 async fn upload(app: &Router, cookie: &str, bytes: Vec<u8>) -> Reply {
+    upload_as(app, cookie, "image/png", bytes).await
+}
+
+async fn upload_as(app: &Router, cookie: &str, content_type: &str, bytes: Vec<u8>) -> Reply {
     let req = Request::builder()
         .method("POST")
         .uri("/api/parent/images")
         .header(header::COOKIE, cookie)
-        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_TYPE, content_type)
         .body(Body::from(bytes))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -750,4 +754,24 @@ async fn deck_progress_and_reset() {
     )
     .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn uploads_a_plain_form_could_send_are_refused() {
+    // A form on another site on the same host (same-site, so the cookie goes along) can
+    // only send these types; requiring image/* forces a CORS preflight it can't pass.
+    let (app, c) = parent().await;
+    let png = b"\x89PNG\r\n\x1a\nrest".to_vec();
+    for content_type in [
+        "text/plain",
+        "multipart/form-data; boundary=x",
+        "application/x-www-form-urlencoded",
+    ] {
+        let r = upload_as(&app, &c, content_type, png.clone()).await;
+        assert_eq!(
+            r.status,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "{content_type}"
+        );
+    }
 }

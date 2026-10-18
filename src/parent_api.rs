@@ -5,7 +5,7 @@ use crate::manage::{self, CardInput, ChildInput, DeckInput, Error, SubjectInput}
 use crate::server::{Shared, error, internal, today};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
@@ -134,7 +134,18 @@ async fn update_card(
     done(manage::update_card(&s.db.lock().unwrap(), id, &c))
 }
 
-async fn add_image(State(s): State<Shared>, body: Bytes) -> Response {
+/// Takes the raw image as the body. Only `image/*` is accepted: an HTML form can only send
+/// `text/plain`, `multipart/form-data` or `application/x-www-form-urlencoded`, so a page from
+/// another site (or another app on this host, which counts as same-site and gets the parent's
+/// cookie) can't upload without a CORS preflight, which this server never answers.
+async fn add_image(State(s): State<Shared>, headers: HeaderMap, body: Bytes) -> Response {
+    let is_image = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| t.starts_with("image/"));
+    if !is_image {
+        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "image_type");
+    }
     created(manage::add_image(&s.db.lock().unwrap(), &body))
 }
 
