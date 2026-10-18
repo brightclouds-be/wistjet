@@ -1,9 +1,10 @@
 <script lang="ts">
+  import Swatches from '../components/Swatches.svelte'
   import { api, ApiError } from '../lib/api'
+  import { COLOURS } from '../lib/colours'
 
   let { lanUrl, onDone }: { lanUrl: string; onDone: () => void } = $props()
 
-  const COLOURS = ['#e57373', '#f06292', '#ba68c8', '#7986cb', '#4fc3f7', '#4db6ac', '#aed581', '#ffb74d']
   const FIELD_STEP: Record<string, number> = { family_name: 1, timezone: 1, pin: 1, child_name: 2, child_avatar: 2 }
   const FIELD_MESSAGE: Record<string, string> = {
     family_name: 'Geef een familienaam van hoogstens 50 tekens.',
@@ -122,15 +123,7 @@
     <form onsubmit={next}>
       <h1>Wie gaat er oefenen?</h1>
       <label>Naam van je kind <input bind:value={childName} maxlength="50" required /></label>
-      <fieldset class="swatches">
-        <legend>Kleur</legend>
-        {#each COLOURS as colour, i (colour)}
-          <label class="swatch" style:background={colour}>
-            <input type="radio" name="colour" value={colour} bind:group={childAvatar} />
-            <span class="sr-only">Kleur {i + 1}</span>
-          </label>
-        {/each}
-      </fieldset>
+      <Swatches bind:value={childAvatar} name="colour" />
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="actions">
         <button type="button" class="secondary" onclick={back}>Terug</button>
