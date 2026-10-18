@@ -46,13 +46,13 @@ has landed, so it can build on the real interfaces instead of guessed ones.
 
 1. **Learning engine & storage** — crate setup, CI, the pure scheduling engine,
    schema + migrations, due/answer/reset queries. Covers every §5 rule and its
-   §11 tests. → `2026-10-11-plan-1-learning-engine.md`
+   §11 tests. → `2026-10-11-plan-1-learning-engine.md` (done)
 2. **App shell, first run & parent auth** — `axum` server, embedded Svelte SPA,
    launcher (data dir, opens the browser, shows the LAN URL + QR code for
-   tablets, tray icon, no console window on Windows), first-run wizard
+   tablets), first-run wizard
    (§7.8, including the sample French–Dutch deck), PIN hashing, lockout
    after 5 attempts, 10-minute parent sessions, server-side guard on every
-   parent route (§8).
+   parent route (§8). → `2026-10-18-plan-2-app-shell.md`
 3. **Child experience** — profile select with due badges, child home with
    per-subject counts and today's progress bar, study screen (reveal,
    keyboard ← / → / space, touch buttons), repeat-missed queue, gentle retry on
@@ -63,7 +63,7 @@ has landed, so it can build on the real interfaces instead of guessed ones.
    reset progress, settings, change PIN (§7).
 5. **Data safety & distribution** — backup download/restore, daily automatic
    backup with retention (§9.2), Docker image, `compose.yaml`, k8s example,
-   `cargo-dist` releases, README (install, upgrade, backup, no-internet
+   `cargo-dist` releases, tray icon and no console window on Windows, README (install, upgrade, backup, no-internet
    warning), the Playwright end-to-end test (§11).
 
 ## Open decisions (not blocking Plan 1)
