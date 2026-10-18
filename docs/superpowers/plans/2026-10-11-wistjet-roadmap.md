@@ -37,8 +37,10 @@ has landed, so it can build on the real interfaces instead of guessed ones.
   Restore checks `application_id`, migrates the uploaded copy, then atomically
   swaps it in. Auto-backup is an in-process daily timer with retention.
 - **Data location:** `WISTJET_DATA_DIR`, defaulting to the OS per-user data
-  folder (`directories` crate). Also `WISTJET_BACKUP_DIR` and `WISTJET_PORT`
-  (default 8080).
+  folder (`directories` crate). Also `WISTJET_BACKUP_DIR`, `WISTJET_PORT`
+  (default 8080), `WISTJET_OPEN_BROWSER` and `WISTJET_HOSTS` (extra host names
+  for a reverse proxy or ingress; IPs, `localhost`, single-label and `.local`
+  names are always accepted).
 - **Single instance only.** The k8s example uses `replicas: 1` and
   `strategy: Recreate` with a PVC; the README says why.
 

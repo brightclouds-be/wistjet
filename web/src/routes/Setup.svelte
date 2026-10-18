@@ -1,7 +1,11 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api'
 
-  let { lanUrl, onDone }: { lanUrl: string; onDone: () => void } = $props()
+  let {
+    lanUrl,
+    codeRequired,
+    onDone,
+  }: { lanUrl: string; codeRequired: boolean; onDone: () => void } = $props()
 
   const COLOURS = ['#e57373', '#f06292', '#ba68c8', '#7986cb', '#4fc3f7', '#4db6ac', '#aed581', '#ffb74d']
   const FIELD_STEP: Record<string, number> = { family_name: 1, timezone: 1, pin: 1, child_name: 2, child_avatar: 2 }
@@ -22,6 +26,7 @@
   let timezone = $state(browserZone)
   let pin = $state('')
   let pinAgain = $state('')
+  let setupCode = $state('')
   let childName = $state('')
   let childAvatar = $state(COLOURS[0])
   let sampleDeck = $state(true)
@@ -59,12 +64,19 @@
         child_name: childName,
         child_avatar: childAvatar,
         sample_deck: sampleDeck,
+        setup_code: setupCode,
       })
       step = 4
     } catch (err) {
       const field = err instanceof ApiError ? err.body?.field : undefined
       if (err instanceof ApiError && err.status === 409) {
         onDone() // set up meanwhile, e.g. in another tab
+      } else if (err instanceof ApiError && err.body?.error === 'setup_code') {
+        step = 1
+        error = 'Die instelcode klopt niet. Je vindt hem in het Wistjet-venster op de computer.'
+      } else if (err instanceof ApiError && err.body?.error === 'setup_code_locked') {
+        step = 1
+        error = 'Te veel foute instelcodes. Rond de installatie af op de computer waar Wistjet draait, of herstart Wistjet.'
       } else if (field && field in FIELD_STEP) {
         step = FIELD_STEP[field]
         error = FIELD_MESSAGE[field]
@@ -83,6 +95,12 @@
   {#if step === 1}
     <form onsubmit={next}>
       <h1>Welkom bij Wistjet</h1>
+      {#if codeRequired}
+        <label>
+          Instelcode (staat in het Wistjet-venster op de computer)
+          <input inputmode="numeric" autocomplete="one-time-code" bind:value={setupCode} required />
+        </label>
+      {/if}
       <label>Familienaam <input bind:value={familyName} maxlength="50" required /></label>
       <label>
         Tijdzone

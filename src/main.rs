@@ -12,6 +12,8 @@ struct Config {
     data_dir: Option<PathBuf>,
     port: u16,
     open_browser: bool,
+    /// Extra host names to accept, e.g. a reverse-proxy or ingress name.
+    hosts: Vec<String>,
 }
 
 impl Config {
@@ -26,6 +28,13 @@ impl Config {
             data_dir: get("WISTJET_DATA_DIR").map(PathBuf::from),
             port,
             open_browser: get("WISTJET_OPEN_BROWSER").is_none_or(|v| v != "0"),
+            hosts: get("WISTJET_HOSTS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .map(String::from)
+                .collect(),
         })
     }
 }
@@ -79,19 +88,25 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(|ip| format!("http://{ip}:{}", config.port))
         .unwrap_or_else(|_| local.clone());
 
+    let set_up = wistjet::family::is_set_up(&conn)?;
+    let state = server::AppState::new(conn, lan_url.clone(), config.hosts);
+
     println!("Wistjet draait.");
     println!("  Op deze computer:  {local}");
     println!("  Op een tablet:     {lan_url}");
     println!("  Gegevens:          {}", data_dir.display());
+    if !set_up {
+        println!(
+            "  Instelcode:        {} (alleen nodig om in te stellen vanaf een ander toestel)",
+            state.setup_code
+        );
+    }
     println!("Sluit dit venster om Wistjet te stoppen.");
     if config.open_browser {
         let _ = open::that(&local);
     }
-    axum::serve(
-        listener,
-        server::router(server::AppState::new(conn, lan_url)),
-    )
-    .await?;
+    let app = server::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
@@ -139,7 +154,8 @@ mod tests {
             Ok(Config {
                 data_dir: None,
                 port: 8080,
-                open_browser: true
+                open_browser: true,
+                hosts: vec![]
             })
         );
     }
@@ -151,11 +167,13 @@ mod tests {
                 ("WISTJET_DATA_DIR", "/data"),
                 ("WISTJET_PORT", "9000"),
                 ("WISTJET_OPEN_BROWSER", "0"),
+                ("WISTJET_HOSTS", " wistjet.thuis, ,flashcards.example.org "),
             ]),
             Ok(Config {
                 data_dir: Some("/data".into()),
                 port: 9000,
-                open_browser: false
+                open_browser: false,
+                hosts: vec!["wistjet.thuis".into(), "flashcards.example.org".into()]
             })
         );
     }
@@ -171,14 +189,20 @@ mod tests {
             .await
             .unwrap();
         let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let app = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         port
     }
 
     #[tokio::test]
     async fn recognises_a_running_wistjet() {
         let conn = wistjet::db::open_in_memory().unwrap();
-        let port = serve(server::router(server::AppState::new(conn, String::new()))).await;
+        let port = serve(server::router(server::AppState::new(
+            conn,
+            String::new(),
+            vec![],
+        )))
+        .await;
         assert!(is_wistjet(port).await);
     }
 

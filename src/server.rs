@@ -1,9 +1,10 @@
 //! HTTP API and embedded web app. Every `/api/parent/*` route except login and logout
-//! requires a parent session (spec §8).
+//! requires a parent session (spec §8). Every request must be addressed to a home-network
+//! name, which blocks DNS-rebinding attacks from websites a parent visits.
 
 use crate::auth::{self, Auth, Login};
 use crate::family::{self, Setup, SetupError};
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -12,10 +13,14 @@ use axum::{Json, Router};
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::json;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const COOKIE: &str = "wistjet_parent";
+/// Wrong setup codes from other devices before setup from them is closed until restart.
+const MAX_SETUP_CODE_FAILURES: u32 = 10;
 
 // ponytail: one connection behind a mutex; one family's traffic is tiny.
 pub struct AppState {
@@ -23,16 +28,24 @@ pub struct AppState {
     pub auth: Mutex<Auth>,
     /// Address tablets on the home network can use, shown during first run.
     pub lan_url: String,
+    /// Extra host names to accept besides IPs, `localhost`, single-label and `.local` names.
+    allowed_hosts: Vec<String>,
+    /// Six digits printed in the console; needed to finish setup from another device.
+    pub setup_code: String,
+    setup_code_failures: AtomicU32,
 }
 
 pub type Shared = Arc<AppState>;
 
 impl AppState {
-    pub fn new(db: Connection, lan_url: String) -> Shared {
+    pub fn new(db: Connection, lan_url: String, allowed_hosts: Vec<String>) -> Shared {
         Arc::new(AppState {
             db: Mutex::new(db),
             auth: Mutex::new(Auth::default()),
             lan_url,
+            allowed_hosts,
+            setup_code: format!("{:06}", rand::random_range(0..1_000_000)),
+            setup_code_failures: AtomicU32::new(0),
         })
     }
 }
@@ -58,7 +71,53 @@ pub fn router(state: Shared) -> Router {
         .route("/api/parent/logout", post(logout))
         .nest("/api/parent", parent)
         .fallback(static_file)
+        .layer(middleware::from_fn_with_state(state.clone(), check_host))
         .with_state(state)
+}
+
+/// True for names a home network uses: IP addresses, `localhost`, single-label names
+/// (`nas`), `.local` names, and names the admin listed in `WISTJET_HOSTS`.
+pub fn host_allowed(host: &str, extra: &[String]) -> bool {
+    let name = match host.strip_prefix('[') {
+        Some(v6) => {
+            return v6
+                .split(']')
+                .next()
+                .is_some_and(|ip| ip.parse::<std::net::Ipv6Addr>().is_ok());
+        }
+        None => host
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+    };
+    !name.is_empty()
+        && (name.parse::<std::net::IpAddr>().is_ok()
+            || name == "localhost"
+            || !name.contains('.')
+            || name.ends_with(".local")
+            || extra.iter().any(|h| h.eq_ignore_ascii_case(&name)))
+}
+
+async fn check_host(State(s): State<Shared>, req: Request, next: Next) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok());
+    match host {
+        Some(h) if !host_allowed(h, &s.allowed_hosts) => (
+            StatusCode::FORBIDDEN,
+            format!(
+                "Wistjet weigert de naam {h}. Gebruik het IP-adres, of voeg de naam toe aan WISTJET_HOSTS."
+            ),
+        )
+            .into_response(),
+        _ => next.run(req).await,
+    }
+}
+
+fn is_local(peer: SocketAddr) -> bool {
+    peer.ip().to_canonical().is_loopback()
 }
 
 fn error(status: StatusCode, code: &str) -> Response {
@@ -89,15 +148,43 @@ async fn require_parent(State(s): State<Shared>, req: Request, next: Next) -> Re
     }
 }
 
-async fn status(State(s): State<Shared>) -> Response {
+async fn status(State(s): State<Shared>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
     match family::is_set_up(&s.db.lock().unwrap()) {
-        Ok(done) => Json(json!({ "setup_done": done, "lan_url": s.lan_url })).into_response(),
+        Ok(done) => Json(json!({
+            "setup_done": done,
+            "setup_code_required": !done && !is_local(peer),
+            "lan_url": s.lan_url,
+        }))
+        .into_response(),
         Err(e) => internal(e),
     }
 }
 
-async fn setup(State(s): State<Shared>, Json(body): Json<Setup>) -> Response {
-    match family::create(&mut s.db.lock().unwrap(), &body) {
+#[derive(Deserialize)]
+struct SetupRequest {
+    #[serde(flatten)]
+    setup: Setup,
+    #[serde(default)]
+    setup_code: String,
+}
+
+async fn setup(
+    State(s): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<SetupRequest>,
+) -> Response {
+    // Setup from the computer Wistjet runs on is trusted; anything else needs the
+    // code from the console, so nobody else on the network can claim the PIN first.
+    if !is_local(peer) {
+        if s.setup_code_failures.load(Ordering::SeqCst) >= MAX_SETUP_CODE_FAILURES {
+            return error(StatusCode::FORBIDDEN, "setup_code_locked");
+        }
+        if body.setup_code != s.setup_code {
+            s.setup_code_failures.fetch_add(1, Ordering::SeqCst);
+            return error(StatusCode::FORBIDDEN, "setup_code");
+        }
+    }
+    match family::create(&mut s.db.lock().unwrap(), &body.setup) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(SetupError::AlreadyDone) => error(StatusCode::CONFLICT, "already_set_up"),
         Err(SetupError::Invalid(field)) => (
@@ -191,5 +278,44 @@ async fn static_file(uri: Uri) -> Response {
         )
             .into_response(),
         None => error(StatusCode::NOT_FOUND, "not_found"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn home_network_names_are_allowed() {
+        for host in [
+            "localhost",
+            "localhost:8080",
+            "127.0.0.1:8080",
+            "192.168.1.23",
+            "[::1]:8080",
+            "[fe80::1]",
+            "nas",
+            "nas:8080",
+            "wistjet.local",
+            "WISTJET.LOCAL:80",
+        ] {
+            assert!(host_allowed(host, &[]), "{host}");
+        }
+    }
+
+    #[test]
+    fn other_names_are_refused_unless_listed() {
+        for host in [
+            "evil.example",
+            "evil.example:8080",
+            "192.168.1.23.nip.io",
+            "wistjet.thuis",
+            "",
+        ] {
+            assert!(!host_allowed(host, &[]), "{host}");
+        }
+        let listed = ["wistjet.thuis".to_string()];
+        assert!(host_allowed("Wistjet.Thuis:443", &listed));
+        assert!(!host_allowed("evil.example", &listed));
     }
 }
