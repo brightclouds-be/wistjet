@@ -340,3 +340,16 @@ async fn ten_wrong_setup_codes_close_setup_until_restart() {
         assert_eq!(r.json(), json!({ "error": "setup_code_locked" }));
     }
 }
+
+#[tokio::test]
+async fn typos_with_the_right_code_do_not_use_up_attempts() {
+    let app = app();
+    for _ in 0..15 {
+        let mut body = setup_body();
+        body["pin"] = json!("12"); // invalid field, right code
+        let r = send(&app, TABLET, "POST", "/api/setup", None, Some(body)).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+    let r = send(&app, TABLET, "POST", "/api/setup", None, Some(setup_body())).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+}

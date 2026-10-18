@@ -168,19 +168,22 @@ struct SetupRequest {
 
 async fn setup(State(s): State<Shared>, Json(body): Json<SetupRequest>) -> Response {
     // Required from every device: behind a reverse proxy every visitor looks local.
-    if s.setup_code_failures.load(Ordering::SeqCst) >= MAX_SETUP_CODE_FAILURES {
+    // Each request takes a numbered attempt *before* the code is compared, so a burst of
+    // simultaneous guesses cannot slip past the cap. A right code gives its attempt back;
+    // a wrong one keeps it, so at most MAX_SETUP_CODE_FAILURES wrong codes are ever tried.
+    let attempt = s.setup_code_failures.fetch_add(1, Ordering::SeqCst);
+    if attempt >= MAX_SETUP_CODE_FAILURES {
         return error(StatusCode::FORBIDDEN, "setup_code_locked");
     }
     if body.setup_code != s.setup_code {
-        // Counting and checking in one step keeps concurrent guesses within the cap.
-        let before = s.setup_code_failures.fetch_add(1, Ordering::SeqCst);
-        let code = if before + 1 >= MAX_SETUP_CODE_FAILURES {
+        let code = if attempt + 1 >= MAX_SETUP_CODE_FAILURES {
             "setup_code_locked"
         } else {
             "setup_code"
         };
         return error(StatusCode::FORBIDDEN, code);
     }
+    s.setup_code_failures.fetch_sub(1, Ordering::SeqCst);
     match family::create(&mut s.db.lock().unwrap(), &body.setup) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(SetupError::AlreadyDone) => error(StatusCode::CONFLICT, "already_set_up"),
