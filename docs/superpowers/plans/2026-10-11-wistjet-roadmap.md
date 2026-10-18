@@ -54,11 +54,11 @@ has landed, so it can build on the real interfaces instead of guessed ones.
    tablets), first-run wizard
    (§7.8, including the sample French–Dutch deck), PIN hashing, lockout
    after 5 attempts, 10-minute parent sessions, server-side guard on every
-   parent route (§8). → `2026-10-18-plan-2-app-shell.md`
+   parent route (§8). → `2026-10-18-plan-2-app-shell.md` (done)
 3. **Child experience** — profile select with due badges, child home with
    per-subject counts and today's progress bar, study screen (reveal,
    keyboard ← / → / space, touch buttons), repeat-missed queue, gentle retry on
-   a failed save, summary (§6).
+   a failed save, summary (§6). → `2026-10-18-plan-3-child-experience.md`
 4. **Parent area** — overview, children, subjects, decks, cards with images,
    paste-a-list with preview (§7.5), study-system editor with box remapping
    (`engine::remap_positions` applied in one transaction), deck system switch,
