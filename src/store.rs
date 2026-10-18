@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, Result, TransactionBehavior, named
 
 /// Card directions a child may currently study (spec §5.2 minus the due-date check).
 /// Hidden progress (§5.8) is simply not joined; it is never deleted.
-const VISIBLE: &str = "
+pub(crate) const VISIBLE: &str = "
     FROM deck_child dc
     JOIN child ch ON ch.id = dc.child_id AND ch.archived = 0
     JOIN deck d ON d.id = dc.deck_id AND d.archived = 0

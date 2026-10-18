@@ -74,6 +74,14 @@ pub fn pin_hash(conn: &Connection) -> rusqlite::Result<Option<String>> {
         .optional()
 }
 
+/// The family's timezone, which decides what "today" is (spec §5). `None` before setup.
+pub fn timezone(conn: &Connection) -> rusqlite::Result<Option<Tz>> {
+    let tz: Option<String> = conn
+        .query_row("SELECT timezone FROM family", [], |r| r.get(0))
+        .optional()?;
+    Ok(tz.and_then(|t| t.parse().ok()))
+}
+
 /// Active children for the profile screen, in the order they were added.
 pub fn children(conn: &Connection) -> rusqlite::Result<Vec<Child>> {
     let mut stmt =
@@ -238,6 +246,14 @@ mod tests {
     fn names_count_characters_not_bytes() {
         assert!(clean_name(&"é".repeat(50)).is_some());
         assert!(clean_name(&"é".repeat(51)).is_none());
+    }
+
+    #[test]
+    fn timezone_is_known_after_setup() {
+        let mut conn = db::open_in_memory().unwrap();
+        assert_eq!(timezone(&conn).unwrap(), None);
+        create(&mut conn, &setup(false)).unwrap();
+        assert_eq!(timezone(&conn).unwrap(), Some(chrono_tz::Europe::Brussels));
     }
 
     #[test]
