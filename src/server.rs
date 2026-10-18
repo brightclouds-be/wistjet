@@ -4,12 +4,15 @@
 
 use crate::auth::{self, Auth, Login};
 use crate::family::{self, Setup, SetupError};
-use axum::extract::{Request, State};
+use crate::store::{self, Answer, AnswerOutcome};
+use crate::{engine, study};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::{NaiveDate, Utc};
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::json;
@@ -71,6 +74,10 @@ pub fn router(state: Shared) -> Router {
         .route("/api/status", get(status))
         .route("/api/setup", post(setup))
         .route("/api/children", get(children))
+        .route("/api/children/{id}/home", get(child_home))
+        .route("/api/children/{id}/session", get(child_session))
+        .route("/api/answers", post(answer))
+        .route("/api/images/{id}", get(image))
         .route("/api/lan-qr.svg", get(lan_qr))
         .route("/api/parent/login", post(login))
         .route("/api/parent/logout", post(logout))
@@ -205,9 +212,113 @@ async fn setup(State(s): State<Shared>, Json(body): Json<SetupRequest>) -> Respo
     }
 }
 
+/// The family's calendar day right now; `None` before setup.
+fn today(conn: &Connection) -> rusqlite::Result<Option<NaiveDate>> {
+    Ok(family::timezone(conn)?.map(|tz| engine::local_today(tz, Utc::now())))
+}
+
+/// Profile tiles with their due badge (spec §6.1).
 async fn children(State(s): State<Shared>) -> Response {
-    match family::children(&s.db.lock().unwrap()) {
+    let conn = s.db.lock().unwrap();
+    let tiles = (|| {
+        let today = today(&conn)?;
+        family::children(&conn)?
+            .into_iter()
+            .map(|c| {
+                let due = match today {
+                    Some(t) => store::due_items(&conn, c.id, None, t)?.len(),
+                    None => 0,
+                };
+                Ok(json!({ "id": c.id, "name": c.name, "avatar": c.avatar, "due": due }))
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()
+    })();
+    match tiles {
         Ok(list) => Json(list).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn child_home(State(s): State<Shared>, Path(id): Path<i64>) -> Response {
+    let conn = s.db.lock().unwrap();
+    let home = today(&conn).and_then(|t| match t {
+        Some(t) => study::home(&conn, id, t),
+        None => Ok(None),
+    });
+    match home {
+        Ok(Some(h)) => Json(h).into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, "not_found"),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionQuery {
+    subject: Option<i64>,
+}
+
+async fn child_session(
+    State(s): State<Shared>,
+    Path(id): Path<i64>,
+    Query(q): Query<SessionQuery>,
+) -> Response {
+    let conn = s.db.lock().unwrap();
+    let cards = today(&conn).and_then(|t| match t {
+        Some(t) => study::session(&conn, id, q.subject, t, &mut rand::rng()),
+        None => Ok(vec![]),
+    });
+    match cards {
+        Ok(cards) => Json(cards).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AnswerBody {
+    id: String,
+    child_id: i64,
+    card_id: i64,
+    direction: u8,
+    known: bool,
+}
+
+/// Saves a scheduling answer (spec §5.3). Repeats and retries are harmless: the server
+/// decides what counts, so every outcome but "not visible" is a plain success.
+async fn answer(State(s): State<Shared>, Json(b): Json<AnswerBody>) -> Response {
+    if !(1..=64).contains(&b.id.len()) || b.direction > 1 {
+        return error(StatusCode::BAD_REQUEST, "invalid");
+    }
+    let mut conn = s.db.lock().unwrap();
+    let today = match today(&conn) {
+        Ok(Some(t)) => t,
+        Ok(None) => return error(StatusCode::CONFLICT, "not_set_up"),
+        Err(e) => return internal(e),
+    };
+    let a = Answer {
+        id: b.id,
+        child_id: b.child_id,
+        card_id: b.card_id,
+        direction: b.direction,
+        known: b.known,
+    };
+    match store::record_answer(&mut conn, &a, Utc::now(), today) {
+        Ok(AnswerOutcome::NotFound) => error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn image(State(s): State<Shared>, Path(id): Path<i64>) -> Response {
+    match study::image(&s.db.lock().unwrap(), id) {
+        Ok(Some((mime, data))) => (
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+            ],
+            data,
+        )
+            .into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, "not_found"),
         Err(e) => internal(e),
     }
 }

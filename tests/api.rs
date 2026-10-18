@@ -159,7 +159,7 @@ async fn setup_lists_the_first_child() {
     let r = call(&app, "GET", "/api/children", None, None).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": 1, "name": "Lotte", "avatar": "#e57373" }])
+        json!([{ "id": 1, "name": "Lotte", "avatar": "#e57373", "due": 10 }])
     );
 }
 
@@ -352,4 +352,148 @@ async fn typos_with_the_right_code_do_not_use_up_attempts() {
     }
     let r = send(&app, TABLET, "POST", "/api/setup", None, Some(setup_body())).await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
+}
+
+fn answer_body(id: &str, card_id: i64) -> Value {
+    json!({ "id": id, "child_id": 1, "card_id": card_id, "direction": 0, "known": true })
+}
+
+#[tokio::test]
+async fn child_home_shows_what_is_due() {
+    let app = app();
+    set_up(&app).await;
+    let r = call(&app, "GET", "/api/children/1/home", None, None).await;
+    assert_eq!(
+        r.json(),
+        json!({
+            "name": "Lotte",
+            "avatar": "#e57373",
+            "due": 10,
+            "subjects": [{ "id": 1, "name": "Frans", "due": 10 }],
+            "answered_today": 0,
+            "next_due": null
+        })
+    );
+}
+
+#[tokio::test]
+async fn unknown_child_has_no_home() {
+    let app = app();
+    set_up(&app).await;
+    let r = call(&app, "GET", "/api/children/99/home", None, None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn session_lists_due_cards_question_first() {
+    let app = app();
+    set_up(&app).await;
+    let r = call(&app, "GET", "/api/children/1/session", None, None).await;
+    let cards = r.json();
+    assert_eq!(cards.as_array().unwrap().len(), 10);
+    let chat = cards
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["card_id"] == 1)
+        .unwrap();
+    assert_eq!(
+        chat["question"],
+        json!({ "text": "le chat", "image": null })
+    );
+    assert_eq!(chat["answer"], json!({ "text": "de kat", "image": null }));
+    assert_eq!(chat["subject"], json!("Frans"));
+    assert_eq!(chat["repeat_missed"], json!(true));
+
+    let r = call(
+        &app,
+        "GET",
+        "/api/children/1/session?subject=99",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(r.json(), json!([]));
+}
+
+#[tokio::test]
+async fn answer_counts_once_and_moves_the_home_counts() {
+    let app = app();
+    set_up(&app).await;
+    for _ in 0..2 {
+        let r = call(
+            &app,
+            "POST",
+            "/api/answers",
+            None,
+            Some(answer_body("a1", 1)),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::NO_CONTENT);
+    }
+    let r = call(&app, "GET", "/api/children/1/home", None, None).await;
+    assert_eq!(r.json()["answered_today"], json!(1));
+    assert_eq!(r.json()["due"], json!(9));
+}
+
+#[tokio::test]
+async fn answer_for_a_card_the_child_cannot_see_is_not_found() {
+    let app = app();
+    set_up(&app).await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/answers",
+        None,
+        Some(answer_body("a1", 999)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn malformed_answers_are_rejected() {
+    let app = app();
+    set_up(&app).await;
+    let mut no_id = answer_body("", 1);
+    no_id["id"] = json!("");
+    let mut long_id = answer_body("", 1);
+    long_id["id"] = json!("x".repeat(65));
+    let mut bad_direction = answer_body("a1", 1);
+    bad_direction["direction"] = json!(2);
+    for body in [no_id, long_id, bad_direction] {
+        let r = call(&app, "POST", "/api/answers", None, Some(body)).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn answer_before_setup_is_a_conflict() {
+    let app = app();
+    let r = call(
+        &app,
+        "POST",
+        "/api/answers",
+        None,
+        Some(answer_body("a1", 1)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn card_images_are_served_with_their_type() {
+    let (app, state) = app_and_state();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute_batch("INSERT INTO image (id, mime, data) VALUES (1, 'image/png', x'89504E47')")
+        .unwrap();
+    let r = call(&app, "GET", "/api/images/1", None, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.content_type, "image/png");
+    assert_eq!(r.body, vec![0x89, 0x50, 0x4E, 0x47]);
+    let r = call(&app, "GET", "/api/images/2", None, None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
 }
