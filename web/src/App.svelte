@@ -41,8 +41,8 @@
     <p class="notice">Laden…</p>
   {:else if !status.setup_done}
     <Setup lanUrl={status.lan_url} onDone={load} />
-  {:else if route === '#/ouder'}
-    <Parent />
+  {:else if route.startsWith('#/ouder')}
+    <Parent {route} />
   {:else if child?.[2]}
     {#key route}<Study childId={Number(child[1])} subject={child[3] ? Number(child[3]) : null} />{/key}
   {:else if child}

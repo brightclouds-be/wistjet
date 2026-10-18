@@ -473,3 +473,220 @@ h2 {
 .summary .actions {
   justify-content: center;
 }
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs a {
+  padding: 10px 16px;
+  color: var(--muted);
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tabs a[aria-current='page'] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.rows {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.row.archived {
+  opacity: 0.6;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.inline input {
+  flex: 1;
+  min-width: 160px;
+  margin-top: 0;
+}
+
+.card h2,
+.card h3 {
+  margin: 0 0 12px;
+}
+
+section.card {
+  margin-bottom: 20px;
+}
+
+.deck-link {
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  text-decoration: none;
+}
+
+.choices {
+  border: none;
+  padding: 0;
+  margin: 0 0 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.choices legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.choices .choice {
+  margin: 0;
+  align-items: center;
+}
+
+.card-form .sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.side {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.side legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.side input:not([type='file']) {
+  margin-top: 0;
+}
+
+.thumb {
+  max-height: 56px;
+  max-width: 96px;
+  border-radius: 8px;
+  vertical-align: middle;
+}
+
+.file {
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.file input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.file:has(input:focus-visible) {
+  outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 2px;
+}
+
+button.small {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
+.card-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.note {
+  font-size: 0.9rem;
+}
+
+textarea {
+  width: 100%;
+  font: inherit;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+tr.skipped td {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+tr.skipped td:last-child {
+  text-decoration: none;
+}
+
+.progress-table {
+  display: block;
+  overflow-x: auto;
+}
+
+.saved {
+  color: var(--yes);
+  font-weight: 700;
+}

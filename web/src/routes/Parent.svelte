@@ -1,5 +1,19 @@
 <script lang="ts">
   import { api, ApiError } from '../lib/api'
+  import Children from './parent/Children.svelte'
+  import Deck from './parent/Deck.svelte'
+  import Decks from './parent/Decks.svelte'
+  import Subjects from './parent/Subjects.svelte'
+
+  let { route }: { route: string } = $props()
+
+  // #/ouder/kinderen, #/ouder/vakken, #/ouder/decks, #/ouder/decks/<id>
+  const section = $derived(route.match(/^#\/ouder\/(kinderen|vakken|decks)(?:\/(\d+))?/))
+  const TABS = [
+    ['kinderen', 'Kinderen'],
+    ['vakken', 'Vakken'],
+    ['decks', 'Decks'],
+  ] as const
 
   const IDLE_MS = 10 * 60 * 1000
 
@@ -29,6 +43,13 @@
     }
     pin = ''
   }
+
+  // Any parent request the server refuses with 401 means the session ended.
+  $effect(() => {
+    const locked = () => (unlocked = false)
+    addEventListener('wistjet:locked', locked)
+    return () => removeEventListener('wistjet:locked', locked)
+  })
 
   async function lock() {
     await api('parent/logout', {}).catch(() => {})
@@ -72,5 +93,20 @@
     <h1>Ouderzone</h1>
     <button class="secondary" onclick={lock}>Vergrendel</button>
   </header>
-  <p class="card">Hier beheer je binnenkort kinderen, vakken en decks.</p>
+  <nav class="tabs">
+    {#each TABS as [key, label] (key)}
+      <a href="#/ouder/{key}" aria-current={(section?.[1] ?? 'kinderen') === key ? 'page' : undefined}>{label}</a>
+    {/each}
+  </nav>
+  {#key route}
+    {#if section?.[1] === 'vakken'}
+      <Subjects />
+    {:else if section?.[1] === 'decks' && section[2]}
+      <Deck id={Number(section[2])} />
+    {:else if section?.[1] === 'decks'}
+      <Decks />
+    {:else}
+      <Children />
+    {/if}
+  {/key}
 {/if}
