@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '../lib/api'
+  import { initial } from '../lib/text'
 
   type Child = { id: number; name: string; avatar: string }
 
@@ -17,7 +18,7 @@
   <ul class="tiles">
     {#each list as child (child.id)}
       <li class="tile">
-        <span class="avatar" style:background={child.avatar}>{child.name[0]}</span>
+        <span class="avatar" style:background={child.avatar}>{initial(child.name)}</span>
         <span class="tile-name">{child.name}</span>
       </li>
     {/each}

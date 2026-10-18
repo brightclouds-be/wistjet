@@ -1,6 +1,9 @@
 //! Launcher: opens the data folder, starts the server on the home network and opens the browser.
 
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use wistjet::{db, server};
 
 #[derive(Debug, PartialEq)]
@@ -49,10 +52,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let local = format!("http://localhost:{}", config.port);
 
-    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", config.port)).await {
+    let listener = match bind(config.port).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            // Most likely Wistjet is already running: show it instead of failing.
+            if !is_wistjet(config.port).await {
+                return Err(format!(
+                    "poort {} is al in gebruik door een ander programma. \
+                     Kies een andere poort met WISTJET_PORT, bijvoorbeeld WISTJET_PORT=8081.",
+                    config.port
+                )
+                .into());
+            }
+            // Wistjet is already running (double-clicked twice): show it instead of failing.
             println!("Wistjet draait al op {local}.");
             if config.open_browser {
                 let _ = open::that(&local);
@@ -82,6 +93,31 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     Ok(())
+}
+
+/// Binds the port on all interfaces. Binding loopback first catches a program that holds
+/// only 127.0.0.1, which some systems (macOS) let coexist with a 0.0.0.0 bind; that program
+/// would then answer `http://localhost` instead of Wistjet.
+async fn bind(port: u16) -> std::io::Result<TcpListener> {
+    drop(TcpListener::bind(("127.0.0.1", port)).await?);
+    TcpListener::bind(("0.0.0.0", port)).await
+}
+
+/// True if a Wistjet (an earlier copy that is still running) answers on this port.
+async fn is_wistjet(port: u16) -> bool {
+    let probe = async {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
+        stream
+            .write_all(b"GET /api/status HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            .await?;
+        let mut reply = Vec::new();
+        stream.read_to_end(&mut reply).await?;
+        Ok::<_, std::io::Error>(String::from_utf8_lossy(&reply).contains("\"setup_done\""))
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_secs(2), probe).await,
+        Ok(Ok(true))
+    )
 }
 
 #[cfg(test)]
@@ -128,5 +164,45 @@ mod tests {
     fn bad_port_is_an_error() {
         assert!(config(&[("WISTJET_PORT", "tachtig")]).is_err());
         assert!(config(&[("WISTJET_PORT", "70000")]).is_err());
+    }
+
+    async fn serve(router: axum::Router) -> u16 {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        port
+    }
+
+    #[tokio::test]
+    async fn recognises_a_running_wistjet() {
+        let conn = wistjet::db::open_in_memory().unwrap();
+        let port = serve(server::router(server::AppState::new(conn, String::new()))).await;
+        assert!(is_wistjet(port).await);
+    }
+
+    #[tokio::test]
+    async fn another_program_on_the_port_is_not_wistjet() {
+        let port = serve(axum::Router::new()).await; // answers every request with 404
+        assert!(!is_wistjet(port).await);
+    }
+
+    #[tokio::test]
+    async fn nothing_on_the_port_is_not_wistjet() {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port(); // listener dropped: port is closed again
+        assert!(!is_wistjet(port).await);
+    }
+
+    #[tokio::test]
+    async fn program_holding_only_localhost_blocks_the_bind() {
+        let other = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = other.local_addr().unwrap().port();
+        let err = bind(port).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
     }
 }
