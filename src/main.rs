@@ -18,6 +18,9 @@ struct Config {
     /// `None` = a `backups` folder inside the data folder.
     backup_dir: Option<PathBuf>,
     backup_keep: usize,
+    /// The address tablets use, when the detected one is wrong (in a container it is the
+    /// container's own address). Shown in the banner and as the setup QR code.
+    public_url: Option<String>,
 }
 
 impl Config {
@@ -49,6 +52,7 @@ impl Config {
                 .collect(),
             backup_dir: get("WISTJET_BACKUP_DIR").map(PathBuf::from),
             backup_keep,
+            public_url: get("WISTJET_PUBLIC_URL"),
         })
     }
 }
@@ -98,9 +102,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::create_dir_all(&data_dir)?;
     let conn = db::open(&data_dir.join("wistjet.db")).map_err(|e| format!("{e:?}"))?;
-    let lan_url = local_ip_address::local_ip()
-        .map(|ip| format!("http://{ip}:{}", config.port))
-        .unwrap_or_else(|_| local.clone());
+    let lan_url = config.public_url.clone().unwrap_or_else(|| {
+        local_ip_address::local_ip()
+            .map(|ip| format!("http://{ip}:{}", config.port))
+            .unwrap_or_else(|_| local.clone())
+    });
 
     let set_up = wistjet::family::is_set_up(&conn)?;
     let setup_code = format!("{:06}", rand::random_range(0..1_000_000));
@@ -195,7 +201,8 @@ mod tests {
                 open_browser: true,
                 hosts: vec![],
                 backup_dir: None,
-                backup_keep: 14
+                backup_keep: 14,
+                public_url: None
             })
         );
     }
@@ -210,6 +217,7 @@ mod tests {
                 ("WISTJET_HOSTS", " wistjet.thuis, ,flashcards.example.org "),
                 ("WISTJET_BACKUP_DIR", "/nas/wistjet"),
                 ("WISTJET_BACKUP_KEEP", "30"),
+                ("WISTJET_PUBLIC_URL", "http://nas.local:8080"),
             ]),
             Ok(Config {
                 data_dir: Some("/data".into()),
@@ -217,7 +225,8 @@ mod tests {
                 open_browser: false,
                 hosts: vec!["wistjet.thuis".into(), "flashcards.example.org".into()],
                 backup_dir: Some("/nas/wistjet".into()),
-                backup_keep: 30
+                backup_keep: 30,
+                public_url: Some("http://nas.local:8080".into())
             })
         );
     }
