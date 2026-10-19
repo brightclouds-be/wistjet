@@ -35,8 +35,11 @@
 
   let errors = $state({ cards: '', paste: '', progress: '', settings: '' })
   let saved = $state('')
+  /** A change is being saved; further clicks are ignored so a double tap can't add twice. */
+  let busy = $state(false)
 
-  async function load() {
+  /** Reloads everything; the settings form only when asked, so unsaved edits there survive. */
+  async function load(refreshSettings = false) {
     const [decks, s, sy, ch] = await Promise.all([
       api<DeckRow[]>('parent/decks'),
       api<SubjectRow[]>('parent/subjects'),
@@ -50,7 +53,9 @@
     systems = sy
     children = ch
     const { name, subject_id, system_id, direction_mode, children: assigned, archived } = deck
-    settings = { name, subject_id, system_id, direction_mode, children: [...assigned], archived }
+    if (refreshSettings || !settings) {
+      settings = { name, subject_id, system_id, direction_mode, children: [...assigned], archived }
+    }
     ;[cards, progress] = await Promise.all([
       api<CardRow[]>(`parent/decks/${id}/cards`),
       api<ChildProgress[]>(`parent/decks/${id}/progress`),
@@ -61,18 +66,31 @@
     load()
   })
 
-  /** Runs a change, reloads, and reports a failure in the given section. */
-  async function run(section: keyof typeof errors, action: () => Promise<unknown>): Promise<boolean> {
+  /** Runs a change, then reloads. Only a failed change counts as a failure: reporting a
+   *  saved change as failed would invite a retry that saves it twice. */
+  async function run(
+    section: keyof typeof errors,
+    action: () => Promise<unknown>,
+    refreshSettings = false,
+  ): Promise<boolean> {
+    if (busy) return false
+    busy = true
     errors[section] = ''
     saved = ''
     try {
       await action()
-      await load()
-      return true
     } catch (err) {
       errors[section] = problem(err)
+      busy = false
       return false
     }
+    try {
+      await load(refreshSettings)
+    } catch {
+      errors[section] = 'Bewaard, maar de pagina kon niet bijgewerkt worden. Laad ze opnieuw.'
+    }
+    busy = false
+    return true
   }
 
   async function addCard() {
@@ -116,11 +134,11 @@
   }
 
   async function saveSettings() {
-    if (settings && (await run('settings', () => api(`parent/decks/${id}`, settings, 'PUT')))) saved = 'Bewaard.'
+    if (settings && (await run('settings', () => api(`parent/decks/${id}`, settings, 'PUT'), true))) saved = 'Bewaard.'
   }
 
   const setArchived = (archived: boolean) =>
-    settings && run('settings', () => api(`parent/decks/${id}`, { ...settings, archived }, 'PUT'))
+    settings && run('settings', () => api(`parent/decks/${id}`, { ...settings, archived }, 'PUT'), true)
 
   const PROBLEM = { split: 'geen scheiding gevonden', empty: 'voor- of achterkant leeg', long: 'langer dan 500 tekens' }
 </script>
@@ -201,7 +219,7 @@
         </tbody>
       </table>
       <div class="actions">
-        <button onclick={addPasted} disabled={toAdd.length === 0}>Voeg {toAdd.length} kaartjes toe</button>
+        <button onclick={addPasted} disabled={busy || toAdd.length === 0}>Voeg {toAdd.length} kaartjes toe</button>
       </div>
     {/if}
     {#if errors.paste}<p class="error" role="alert">{errors.paste}</p>{/if}

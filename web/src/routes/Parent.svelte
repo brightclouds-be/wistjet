@@ -60,9 +60,16 @@
   $effect(() => {
     if (!unlocked) return
     let timer = setTimeout(lock, IDLE_MS)
+    let lastPing = 0
     const reset = () => {
       clearTimeout(timer)
       timer = setTimeout(lock, IDLE_MS)
+      // The server's idle clock only sees requests, so typing a long list would otherwise
+      // lock the session mid-sentence. Tell it the parent is still here, at most once a minute.
+      if (Date.now() - lastPing > 60_000) {
+        lastPing = Date.now()
+        api('parent/session').catch(() => {})
+      }
     }
     const events = ['pointerdown', 'keydown'] as const
     events.forEach((e) => addEventListener(e, reset))
