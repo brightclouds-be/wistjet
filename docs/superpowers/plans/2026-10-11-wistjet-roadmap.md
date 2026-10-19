@@ -66,11 +66,14 @@ has landed, so it can build on the real interfaces instead of guessed ones.
    - **4b, systems, overview & settings:** study-system editor with box remapping
      (`engine::remap_positions` applied in one transaction, §7.6), the parent overview
      (§7.1), settings: family name, timezone, change PIN, default system (§7.7).
-     → `2026-10-19-plan-4b-systems-overview-settings.md`
-5. **Data safety & distribution** — backup download/restore, daily automatic
-   backup with retention (§9.2), Docker image, `compose.yaml`, k8s example,
-   `cargo-dist` releases, tray icon and no console window on Windows, README (install, upgrade, backup, no-internet
-   warning), the Playwright end-to-end test (§11).
+     → `2026-10-19-plan-4b-systems-overview-settings.md` (done)
+5. **Data safety & distribution**, in two plans:
+   - **5a, backup, restore & end-to-end test:** backup download and restore (older
+     backups upgrade on restore), daily automatic backups with retention (§9.2), the
+     §11 end-to-end test in CI. → `2026-10-19-plan-5a-backup-restore-e2e.md`
+   - **5b, distribution:** `cargo-dist` desktop releases with a tray icon and no console
+     window on Windows, Docker image, `compose.yaml`, Kubernetes example, README
+     (install, upgrade, backup, no-internet warning) (§9.1).
 
 ## Open decisions (not blocking Plan 1)
 
