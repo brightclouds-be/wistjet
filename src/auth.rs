@@ -51,13 +51,14 @@ pub struct Auth {
 }
 
 impl Auth {
-    /// Tries a login. `pin_ok` runs the (slow) PIN check and is skipped while locked.
-    pub fn login(&mut self, now: Instant, pin_ok: impl FnOnce() -> bool) -> Login {
+    /// Checks a PIN under the lockout (spec §8). `pin_ok` runs the (slow) PIN check and is
+    /// skipped while locked. Wrong PINs at login and when changing the PIN count together.
+    pub fn attempt(&mut self, now: Instant, pin_ok: impl FnOnce() -> bool) -> Result<(), Login> {
         if let Some(until) = self.locked_until {
             if now < until {
-                return Login::Locked {
+                return Err(Login::Locked {
                     retry_after: until - now,
-                };
+                });
             }
             self.locked_until = None;
             self.failures = 0;
@@ -66,13 +67,21 @@ impl Auth {
             self.failures += 1;
             if self.failures >= MAX_FAILURES {
                 self.locked_until = Some(now + LOCKOUT);
-                return Login::Locked {
+                return Err(Login::Locked {
                     retry_after: LOCKOUT,
-                };
+                });
             }
-            return Login::WrongPin;
+            return Err(Login::WrongPin);
         }
         self.failures = 0;
+        Ok(())
+    }
+
+    /// Tries a login: a PIN check under the lockout, then a new session.
+    pub fn login(&mut self, now: Instant, pin_ok: impl FnOnce() -> bool) -> Login {
+        if let Err(refused) = self.attempt(now, pin_ok) {
+            return refused;
+        }
         let token: String = rand::random::<[u8; 32]>()
             .iter()
             .map(|b| format!("{b:02x}"))
@@ -194,6 +203,23 @@ mod tests {
         assert!(auth.touch(&t, t0 + mins(18))); // activity keeps it alive
         assert!(!auth.touch(&t, t0 + mins(28)));
         assert!(!auth.touch(&t, t0 + mins(18))); // gone for good
+    }
+
+    #[test]
+    fn wrong_pins_on_any_check_share_the_lockout() {
+        let mut auth = Auth::default();
+        let t0 = Instant::now();
+        for _ in 0..4 {
+            assert_eq!(auth.attempt(t0, || false), Err(Login::WrongPin));
+        }
+        assert_eq!(
+            auth.attempt(t0, || false),
+            Err(Login::Locked {
+                retry_after: LOCKOUT
+            })
+        );
+        assert!(matches!(auth.login(t0, || true), Login::Locked { .. }));
+        assert_eq!(auth.attempt(t0 + LOCKOUT, || true), Ok(()));
     }
 
     #[test]

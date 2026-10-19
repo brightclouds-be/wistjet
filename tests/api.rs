@@ -991,3 +991,28 @@ async fn changing_the_pin_logs_out_other_devices() {
     .await;
     assert_eq!(r.status, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn wrong_current_pins_count_toward_the_lockout() {
+    let (app, c) = parent().await;
+    let wrong = || Some(json!({ "current": "1111", "new": "13579" }));
+    for _ in 0..4 {
+        let r = call(&app, "POST", "/api/parent/pin", Some(&c), wrong()).await;
+        assert_eq!(r.json()["field"], json!("current_pin"));
+    }
+    let r = call(&app, "POST", "/api/parent/pin", Some(&c), wrong()).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    // The right current PIN is refused while locked, and so is a login.
+    let right = Some(json!({ "current": "2468", "new": "13579" }));
+    let r = call(&app, "POST", "/api/parent/pin", Some(&c), right).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/login",
+        None,
+        Some(json!({ "pin": "2468" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+}

@@ -1,6 +1,8 @@
 //! Parent routes for content management (spec §7.2–7.4). `server::router` mounts these
 //! inside the PIN-guarded `/api/parent` router, so every one needs a parent session.
 
+use crate::auth::{Login, verify_pin};
+use crate::family;
 use crate::manage::{self, CardInput, ChildInput, DeckInput, Error, Settings, SubjectInput};
 use crate::server::{Shared, error, internal, session_token, today};
 use crate::systems::{self, SystemInput};
@@ -12,6 +14,7 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::Instant;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -144,16 +147,36 @@ struct PinChange {
 }
 
 /// Changes the PIN and ends every other parent session, so other devices must use the new one.
+/// A wrong current PIN counts toward the login lockout. Lock order auth → db, as in login, so
+/// no login can slip in with the old PIN between the change and ending the other sessions.
 async fn change_pin(
     State(s): State<Shared>,
     headers: HeaderMap,
     Json(b): Json<PinChange>,
 ) -> Response {
-    let result = manage::change_pin(&s.db.lock().unwrap(), &b.current, &b.new);
+    let mut auth = s.auth.lock().unwrap();
+    let conn = s.db.lock().unwrap();
+    let hash = match family::pin_hash(&conn) {
+        Ok(Some(h)) => h,
+        Ok(None) => return error(StatusCode::CONFLICT, "not_set_up"),
+        Err(e) => return internal(e),
+    };
+    match auth.attempt(Instant::now(), || verify_pin(&b.current, &hash)) {
+        Ok(()) => {}
+        Err(Login::Locked { retry_after }) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({ "error": "locked", "retry_after": retry_after.as_secs().max(1) })),
+            )
+                .into_response();
+        }
+        Err(_) => return fail(Error::Invalid("current_pin")),
+    }
+    let result = manage::set_pin(&conn, &b.new);
     if result.is_ok()
         && let Some(token) = session_token(&headers)
     {
-        s.auth.lock().unwrap().end_other_sessions(token);
+        auth.end_other_sessions(token);
     }
     done(result)
 }

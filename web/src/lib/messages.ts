@@ -39,6 +39,9 @@ export function problem(err: unknown): string {
   if (err instanceof ApiError) {
     const field = err.body?.field
     if (field && field in FIELD) return FIELD[field]
+    if (err.status === 429) {
+      return `Te veel foute pincodes. Probeer opnieuw over ${err.body?.retry_after ?? 60} seconden.`
+    }
     const refused = err.status === 409 ? refusal(err.body?.error, err.body?.count ?? 0) : null
     if (refused) return refused
     if (err.status === 404) return 'Dit bestaat niet meer. Laad de pagina opnieuw.'

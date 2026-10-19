@@ -343,17 +343,16 @@ struct PinBody {
 }
 
 async fn login(State(s): State<Shared>, Json(body): Json<PinBody>) -> Response {
+    // Lock order auth → db, as in the PIN change: the hash is read under the auth lock, so a
+    // login can't check against a PIN that a concurrent change just replaced.
+    let mut auth = s.auth.lock().unwrap();
     let hash = family::pin_hash(&s.db.lock().unwrap());
     let hash = match hash {
         Ok(Some(h)) => h,
         Ok(None) => return error(StatusCode::CONFLICT, "not_set_up"),
         Err(e) => return internal(e),
     };
-    let result = s
-        .auth
-        .lock()
-        .unwrap()
-        .login(Instant::now(), || auth::verify_pin(&body.pin, &hash));
+    let result = auth.login(Instant::now(), || auth::verify_pin(&body.pin, &hash));
     match result {
         Login::Ok(token) => (
             StatusCode::NO_CONTENT,

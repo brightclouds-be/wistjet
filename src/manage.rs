@@ -693,15 +693,9 @@ pub fn update_settings(conn: &Connection, s: &Settings) -> Result<()> {
     )?)
 }
 
-/// Changes the PIN; the current PIN must be given (spec §7.7).
-pub fn change_pin(conn: &Connection, current: &str, new: &str) -> Result<()> {
-    let hash: String = conn
-        .query_row("SELECT pin_hash FROM family", [], |r| r.get(0))
-        .optional()?
-        .ok_or(Error::NotFound)?;
-    if !auth::verify_pin(current, &hash) {
-        return Err(Error::Invalid("current_pin"));
-    }
+/// Stores a new PIN (spec §7.7). The current PIN is checked by the caller, under the same
+/// lockout as the login (`Auth::attempt`).
+pub fn set_pin(conn: &Connection, new: &str) -> Result<()> {
     if !auth::valid_pin(new) {
         return Err(Error::Invalid("pin"));
     }
@@ -1208,12 +1202,11 @@ mod tests {
     }
 
     #[test]
-    fn pin_change_needs_the_current_pin() {
+    fn a_new_pin_is_checked_and_stored_hashed() {
         let mut conn = db::open_in_memory().unwrap();
         family(&mut conn);
-        assert_eq!(invalid(change_pin(&conn, "1111", "13579")), "current_pin");
-        assert_eq!(invalid(change_pin(&conn, "2468", "12")), "pin");
-        change_pin(&conn, "2468", "13579").unwrap();
+        assert_eq!(invalid(set_pin(&conn, "12")), "pin");
+        set_pin(&conn, "13579").unwrap();
         let hash: String = conn
             .query_row("SELECT pin_hash FROM family", [], |r| r.get(0))
             .unwrap();
