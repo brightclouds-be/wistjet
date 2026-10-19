@@ -5,9 +5,10 @@
 //   node e2e/e2e.mjs target/release/wistjet
 //
 // Set CHROME to the browser binary if it isn't found. Exits 1 on the first failure.
+// SCREENSHOTS=docs/images also saves the README screenshots on the way.
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -63,7 +64,7 @@ chrome = spawn(
     '--no-sandbox',
     `--remote-debugging-port=${DEVTOOLS}`,
     `--user-data-dir=${mkdtempSync(join(tmpdir(), 'wistjet-e2e-chrome-'))}`,
-    '--window-size=1000,800',
+    '--window-size=1100,760',
     'about:blank',
   ],
   { stdio: 'ignore' },
@@ -118,6 +119,11 @@ async function key(k) {
   await sleep(300)
 }
 await cdp('Page.enable')
+async function shot(name) {
+  if (!process.env.SCREENSHOTS) return
+  const r = await cdp('Page.captureScreenshot', { format: 'png' })
+  writeFileSync(join(process.env.SCREENSHOTS, `${name}.png`), Buffer.from(r.result.data, 'base64'))
+}
 
 // ---- first run: the browser opened by the app gets the code in its address ----
 await go(`${BASE}/#setup=${code}`)
@@ -150,6 +156,7 @@ await type('textarea', 'le chat - de kat\nle chien - de hond\nla maison - het hu
 await click('Bekijk')
 await click('Voeg 3 kaartjes toe')
 check((await text()).includes('Kaartjes (3)'), 'pasting a list creates 3 cards')
+await shot('parent-deck')
 await click('Vergrendel')
 
 // ---- the child studies ----
@@ -157,9 +164,11 @@ await go(`${BASE}/#/`)
 await js(`document.querySelector('a.tile').click()`)
 await sleep(800)
 check((await text()).includes('3 kaartjes om te oefenen'), 'the child sees 3 cards due')
+await shot('child-home')
 await click('Start met oefenen')
 check((await text()).includes('1 van 3'), 'the session starts at 1 van 3')
 await key(' ')
+await shot('study')
 await key('ArrowLeft') // not known: comes back at the end
 check((await text()).includes('2 van 4'), 'a missed card comes back at the end')
 for (let i = 0; i < 3; i++) {
@@ -168,6 +177,7 @@ for (let i = 0; i < 3; i++) {
 }
 const summary = (await text()).replace(/\s+/g, ' ')
 check(summary.includes('Goed gedaan!'), 'the summary appears')
+await shot('summary')
 check(/2 wist je 1 nog niet 1 keer herhaald/.test(summary), `the summary counts known, not known and repeats (${summary})`)
 
 console.log('All end-to-end checks passed.')
