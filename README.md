@@ -60,11 +60,17 @@ Or use the [`compose.yaml`](compose.yaml) in this repository: `docker compose up
 `docker compose logs wistjet`. Replace `192.168.1.10` with your server's address. The image runs
 as user id 65532 and works on amd64 and arm64 (Raspberry Pi, most NAS).
 
+Using a folder instead of a named volume (for example `-v /volume1/docker/wistjet:/data` on a
+NAS)? Make it writable for Wistjet first: `sudo chown 65532:65532 /volume1/docker/wistjet`.
+Otherwise Wistjet can't create its database and keeps restarting. The same goes for a backup
+folder.
+
 ### On Kubernetes
 
 [`k8s/wistjet.yaml`](k8s/wistjet.yaml) has a volume, a single-pod deployment (Wistjet keeps its data
-in one SQLite file, so it must never run twice), a service and an ingress. Set your host name in
-it, then `kubectl apply -f k8s/wistjet.yaml` and `kubectl logs deploy/wistjet` for the setup code.
+in one SQLite file, so it must never run twice), a service and an ingress. Put your host name in
+its three marked places (`WISTJET_PUBLIC_URL`, `WISTJET_HOSTS` and the ingress host). Then run
+`kubectl apply -f k8s/wistjet.yaml`, and `kubectl logs deploy/wistjet` for the setup code.
 
 ## First run
 
@@ -130,7 +136,10 @@ cargo build --release && node e2e/e2e.mjs target/release/wistjet   # needs Chrom
 above. The design and the plans it was built from are in [`docs/superpowers`](docs/superpowers).
 
 To release, push a version tag (`git tag v0.1.0 && git push origin v0.1.0`). The release workflow
-builds the downloads and the Docker image.
+builds the downloads and the Docker image. A tag with a hyphen (`v0.2.0-rc1`) becomes a pre-release
+and doesn't move `latest`. After the very first release, make the image public: on GitHub, open
+the `wistjet` package, then *Package settings* → *Change visibility* → *Public*. New packages are
+private, so `docker pull` fails for everyone else until you do.
 
 ## License
 

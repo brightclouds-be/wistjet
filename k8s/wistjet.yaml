@@ -41,7 +41,8 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            # The address tablets use (your ingress host, or a node address), shown during setup.
+            # Your host name goes in three places: here, WISTJET_HOSTS below, and the Ingress.
+            # The address tablets use, shown during setup.
             - name: WISTJET_PUBLIC_URL
               value: "http://wistjet.thuis"
             # Host names besides IP addresses that may reach Wistjet: your ingress host.
@@ -64,7 +65,7 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
-              memory: 512Mi # a restore holds the uploaded backup in memory
+              memory: 1Gi # a restore briefly holds the uploaded backup (up to 256 MiB) twice
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -89,7 +90,7 @@ metadata:
   name: wistjet
 spec:
   rules:
-    - host: wistjet.thuis
+    - host: wistjet.thuis # the same name as WISTJET_PUBLIC_URL and WISTJET_HOSTS above
       http:
         paths:
           - path: /

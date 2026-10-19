@@ -17,8 +17,10 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 COPY --from=web /src/web/dist ./web/dist
+# The target cache is locked for the whole step: a multi-arch build must not let one
+# architecture's binary overwrite the other's between building and copying it out.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
+    --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked && cp target/release/wistjet /wistjet
 # An empty folder for the volume, owned by the user the app runs as, so a new volume is writable.
 RUN mkdir /data

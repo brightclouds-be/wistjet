@@ -52,7 +52,14 @@ impl Config {
                 .collect(),
             backup_dir: get("WISTJET_BACKUP_DIR").map(PathBuf::from),
             backup_keep,
-            public_url: get("WISTJET_PUBLIC_URL"),
+            // A bare address ("192.168.1.10:8080") would make the setup QR code plain text.
+            public_url: get("WISTJET_PUBLIC_URL").map(|u| {
+                if u.contains("://") {
+                    u
+                } else {
+                    format!("http://{u}")
+                }
+            }),
         })
     }
 }
@@ -150,8 +157,34 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         backups.keep,
     ));
     let app = server::router(state);
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(stop_signal())
+        .await?;
     Ok(())
+}
+
+/// Resolves on Ctrl-C, or on SIGTERM from `docker stop` and Kubernetes: as a container's first
+/// process, Wistjet would otherwise ignore it and be killed after the grace period.
+async fn stop_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                term.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }
 
 /// Binds the port on all interfaces. Binding loopback first catches a program that holds
@@ -229,6 +262,14 @@ mod tests {
                 public_url: Some("http://nas.local:8080".into())
             })
         );
+    }
+
+    #[test]
+    fn a_tablet_address_without_scheme_becomes_a_link() {
+        let c = config(&[("WISTJET_PUBLIC_URL", "192.168.1.10:8080")]).unwrap();
+        assert_eq!(c.public_url.as_deref(), Some("http://192.168.1.10:8080"));
+        let c = config(&[("WISTJET_PUBLIC_URL", "https://wistjet.thuis")]).unwrap();
+        assert_eq!(c.public_url.as_deref(), Some("https://wistjet.thuis"));
     }
 
     #[test]

@@ -15,14 +15,27 @@ permissions:
   contents: read
 
 jobs:
-  binaries:
+  # One job creates the release, so the parallel builds below only add files to it.
+  release:
+    runs-on: ubuntu-latest
     permissions:
-      contents: write # create the release and upload files
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  binaries:
+    needs: release
+    permissions:
+      contents: write # upload files to the release
     strategy:
       matrix:
+        # Linux binaries are built on Ubuntu 22.04: an older glibc runs on more systems
+        # (Debian 12, Raspberry Pi OS) than one built on the newest Ubuntu.
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: wistjet-linux-x86_64 }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: wistjet-linux-arm64 }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: wistjet-linux-x86_64 }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: wistjet-linux-arm64 }
           - { os: macos-latest, target: aarch64-apple-darwin, name: wistjet-macos-apple-silicon }
           - { os: macos-latest, target: x86_64-apple-darwin, name: wistjet-macos-intel }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, name: wistjet-windows-x86_64 }
@@ -78,7 +91,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       # ponytail: arm64 is built under QEMU (slow, tens of minutes); split per-arch native
       # runners and merge the manifests if release time ever matters.
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6

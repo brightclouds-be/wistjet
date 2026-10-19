@@ -23,6 +23,8 @@ services:
       # How many daily backups to keep.
       WISTJET_BACKUP_KEEP: "14"
     volumes:
+      # A named volume just works. To use a folder instead (e.g. /volume1/docker/wistjet:/data),
+      # first make it writable for Wistjet's user: sudo chown 65532:65532 <folder>
       - wistjet-data:/data
       # The folder must be writable by user id 65532, the user Wistjet runs as.
       # - /mnt/nas/wistjet-backups:/backups
