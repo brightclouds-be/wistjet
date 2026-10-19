@@ -24,6 +24,8 @@ const FIELD: Record<string, string> = {
   default_system_id: 'Kies een bestaand studiesysteem.',
   current_pin: 'De huidige pincode klopt niet.',
   pin: 'De nieuwe pincode bestaat uit 4 tot 8 cijfers.',
+  backup_file: 'Dat bestand is geen Wistjet-back-up. Er is niets veranderd.',
+  backup_newer: 'Deze back-up komt van een nieuwere Wistjet. Werk Wistjet eerst bij. Er is niets veranderd.',
 }
 
 /** Why the server refused (409), for refusals a parent can act on. */

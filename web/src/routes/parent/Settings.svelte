@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { api } from '../../lib/api'
+  import { api, download, upload } from '../../lib/api'
   import { problem } from '../../lib/messages'
-  import type { Settings, SystemDetail } from '../../lib/types'
+  import type { BackupStatus, Settings, SystemDetail } from '../../lib/types'
 
   let settings = $state<Settings | null>(null)
   let systems = $state<SystemDetail[]>([])
   let zones = $state<string[]>([])
   let pins = $state({ current: '', new: '', again: '' })
-  let status = $state({ settings: '', pin: '' })
-  let errors = $state({ settings: '', pin: '' })
+  let status = $state({ settings: '', pin: '', backup: '' })
+  let errors = $state({ settings: '', pin: '', backup: '' })
+  let backups = $state<BackupStatus | null>(null)
   let busy = $state(false)
 
   async function load() {
@@ -17,8 +18,9 @@
     if (!zones.includes(settings.timezone)) zones = [settings.timezone, ...zones]
   }
   load().catch(() => (errors.settings = 'De instellingen konden niet geladen worden.'))
+  api<BackupStatus>('parent/backups').then((b) => (backups = b), () => {})
 
-  async function run(section: 'settings' | 'pin', action: () => Promise<unknown>, done: string) {
+  async function run(section: 'settings' | 'pin' | 'backup', action: () => Promise<unknown>, done: string) {
     if (busy) return
     busy = true
     errors[section] = ''
@@ -52,6 +54,23 @@
       },
       'De pincode is gewijzigd. Andere toestellen moeten opnieuw ontgrendelen.',
     )
+  }
+
+  function downloadBackup() {
+    run('backup', () => download('parent/backup', 'wistjet-back-up.db'), 'De back-up is gedownload.')
+  }
+
+  async function restore(e: Event) {
+    const input = e.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    if (!confirm(`Alle huidige gegevens vervangen door "${file.name}"? Dit kan niet ongedaan gemaakt worden.`)) return
+    await run('backup', () => upload('parent/restore', file, 'application/octet-stream'), '')
+    if (!errors.backup) {
+      alert('De back-up is teruggezet. Ontgrendel opnieuw met de pincode uit de back-up.')
+      dispatchEvent(new Event('wistjet:locked'))
+    }
   }
 </script>
 
@@ -100,4 +119,24 @@
     {#if status.pin}<p class="saved" role="status">{status.pin}</p>{/if}
     <div class="actions"><button type="submit" disabled={busy}>Wijzig pincode</button></div>
   </form>
+</section>
+
+<section class="card">
+  <h2>Back-up</h2>
+  <p>Eén bestand met alles: kinderen, decks, kaartjes, afbeeldingen, voortgang en instellingen.</p>
+  {#if backups?.dir}
+    <p class="muted">
+      Elke dag maakt Wistjet zelf een back-up in <code>{backups.dir}</code> en bewaart er de laatste
+      {backups.keep}.{#if backups.latest} Laatste: {backups.latest}.{/if}
+    </p>
+  {/if}
+  {#if errors.backup}<p class="error" role="alert">{errors.backup}</p>{/if}
+  {#if status.backup}<p class="saved" role="status">{status.backup}</p>{/if}
+  <div class="actions">
+    <label class="button secondary file-button">
+      Back-up terugzetten…
+      <input type="file" accept=".db,application/octet-stream,application/vnd.sqlite3" onchange={restore} disabled={busy} />
+    </label>
+    <button onclick={downloadBackup} disabled={busy}>Download back-up</button>
+  </div>
 </section>

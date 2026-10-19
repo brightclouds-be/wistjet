@@ -44,3 +44,4 @@ export type ChildOverview = {
   boxes: number[]
 }
 export type Settings = { name: string; timezone: string; default_system_id: number }
+export type BackupStatus = { dir: string | null; keep: number; latest: string | null }

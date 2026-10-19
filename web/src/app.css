@@ -821,3 +821,24 @@ tr.skipped td:last-child {
   font-weight: 600;
   vertical-align: middle;
 }
+
+.file-button {
+  margin: 0;
+  position: relative;
+}
+
+.file-button input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.file-button:has(input:focus-visible) {
+  outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 2px;
+}
+
+code {
+  overflow-wrap: anywhere;
+}
