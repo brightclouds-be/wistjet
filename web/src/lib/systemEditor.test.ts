@@ -26,10 +26,17 @@ test('a loaded system saves back unchanged', () => {
   )
 })
 
-test('a copy has no origins and a new name', () => {
+test('an edit sends the boxes it was loaded with, so a stale page can be refused', () => {
+  let e = fromSystem(SCHOOL)
+  e = removeBox(e, e.boxes[2].key)
+  assert.deepEqual(toInput(e).previous, SCHOOL.boxes)
+})
+
+test('a copy has no origins, no previous boxes and a new name', () => {
   const e = fromSystem(SCHOOL, true)
   assert.equal(e.name, 'Kopie van School 4-box')
   assert.ok(toInput(e).boxes.every((b) => b.origin === null))
+  assert.equal(toInput(e).previous, null)
 })
 
 test('removing a box resets links to it and says so', () => {

@@ -13,7 +13,7 @@ export type SystemDetail = {
   is_default: boolean
 }
 export type BoxInput = BoxRow & { origin: number | null }
-export type SystemInput = { name: string; repeat_missed: boolean; boxes: BoxInput[] }
+export type SystemInput = { name: string; repeat_missed: boolean; boxes: BoxInput[]; previous: BoxRow[] | null }
 export type DeckInput = {
   name: string
   subject_id: number

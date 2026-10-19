@@ -1,4 +1,4 @@
-import type { SystemDetail, SystemInput } from './types'
+import type { BoxRow, SystemDetail, SystemInput } from './types'
 
 /** A box in the editor. `success` and `failure` point at other boxes' `key`s, so links
  *  survive reordering; positions are only worked out when saving. `origin` is the box's
@@ -20,6 +20,9 @@ export type Editor = {
   nextKey: number
   /** What a box removal changed, shown before saving (spec §7.6). */
   notices: string[]
+  /** The boxes as loaded (`null` for a copy); the server refuses the save if another tab
+   *  changed them meanwhile, because the origins would no longer be true. */
+  previous: BoxRow[] | null
 }
 
 export function fromSystem(s: SystemDetail, copy = false): Editor {
@@ -29,6 +32,7 @@ export function fromSystem(s: SystemDetail, copy = false): Editor {
     boxes: s.boxes.map((b, i) => ({ key: i, origin: copy ? null : i, ...b })),
     nextKey: s.boxes.length,
     notices: [],
+    previous: copy ? null : s.boxes,
   }
 }
 
@@ -44,6 +48,7 @@ export function toInput(e: Editor): SystemInput {
       failure: pos(b.failure),
       origin: b.origin,
     })),
+    previous: e.previous,
   }
 }
 

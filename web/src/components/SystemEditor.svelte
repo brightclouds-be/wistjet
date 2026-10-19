@@ -24,7 +24,10 @@
   <div class="scroll">
     <table class="boxes">
       <thead>
-        <tr><th>Bakje</th><th>Elke … dagen</th><th>Wist ik →</th><th>Wist ik niet →</th><th></th></tr>
+        <tr>
+          <th>Bakje</th><th>Elke … dagen</th><th>Wist ik →</th><th>Wist ik niet →</th>
+          <th><span class="sr-only">Acties</span></th>
+        </tr>
       </thead>
       <tbody>
         {#each editor.boxes as box, i (box.key)}
@@ -60,12 +63,13 @@
     + Bakje
   </button>
 
-  {#if editor.notices.length > 0}
-    <div class="notices" role="status">
+  <!-- Always present, so screen readers announce notices as they appear. -->
+  <div class="notices" role="status" hidden={editor.notices.length === 0}>
+    {#if editor.notices.length > 0}
       <p>Door het weghalen van een bakje is dit aangepast:</p>
       <ul>{#each editor.notices as notice, i (i)}<li>{notice}</li>{/each}</ul>
-    </div>
-  {/if}
+    {/if}
+  </div>
 
   <div class="actions">
     <button type="button" class="secondary" onclick={oncancel}>Annuleer</button>

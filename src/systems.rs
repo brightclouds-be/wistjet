@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// More boxes than this is a typo, not a study system.
 const MAX_BOXES: usize = 12;
 
-#[derive(Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoxRow {
     pub name: String,
     pub interval_days: u32,
@@ -46,6 +46,10 @@ pub struct SystemInput {
     pub name: String,
     pub repeat_missed: bool,
     pub boxes: Vec<BoxInput>,
+    /// On an edit: the boxes as the browser loaded them. If they no longer match, another
+    /// tab saved in between and the origins can't be trusted, so the save is refused.
+    #[serde(default)]
+    pub previous: Option<Vec<BoxRow>>,
 }
 
 /// All systems, preset first, with their boxes.
@@ -170,10 +174,24 @@ pub fn update(conn: &mut Connection, id: i64, s: &SystemInput) -> Result<()> {
     let (name, names) = check(s)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     refuse_preset(&tx, id)?;
-    let old_len: usize =
-        tx.query_row("SELECT count(*) FROM box WHERE system_id = ?1", [id], |r| {
-            r.get(0)
-        })?;
+    let current: Vec<BoxRow> = tx
+        .prepare(
+            "SELECT name, interval_days, success_position, failure_position
+             FROM box WHERE system_id = ?1 ORDER BY position",
+        )?
+        .query_map([id], |r| {
+            Ok(BoxRow {
+                name: r.get(0)?,
+                interval_days: r.get(1)?,
+                success: r.get(2)?,
+                failure: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    if s.previous.as_ref().is_some_and(|p| *p != current) {
+        return Err(Error::Invalid("origin"));
+    }
+    let old_len = current.len();
     let origins: Vec<Option<usize>> = s.boxes.iter().map(|b| b.origin).collect();
     let mut seen = vec![false; old_len];
     for &o in origins.iter().flatten() {
@@ -265,6 +283,7 @@ mod tests {
                 bx("C", 7, 3, 0, origins[2]),
                 bx("D", 30, 3, 0, origins[3]),
             ],
+            previous: None,
         }
     }
 
@@ -397,6 +416,7 @@ mod tests {
                 bx("C", 7, 2, 0, Some(2)),
                 bx("D", 30, 2, 0, Some(3)),
             ],
+            previous: None,
         };
         update(&mut conn, 2, &input).unwrap();
         assert_eq!(
@@ -428,6 +448,7 @@ mod tests {
             name: "Kort".into(),
             repeat_missed: true,
             boxes: vec![bx("A", 1, 1, 0, Some(0)), bx("B", 5, 1, 0, Some(1))],
+            previous: None,
         };
         update(&mut conn, 2, &input).unwrap();
         let boxes: Vec<i64> = progress(&conn).iter().map(|p| p.1).collect();
@@ -438,6 +459,23 @@ mod tests {
             (s.name.as_str(), s.repeat_missed, s.boxes.len()),
             ("Kort", true, 2)
         );
+    }
+
+    #[test]
+    fn a_save_from_a_stale_page_is_refused() {
+        let mut conn = fixture();
+        let loaded = list(&conn).unwrap().remove(1).boxes; // both tabs load the same boxes
+        // Tab B swaps A and B and saves.
+        let mut swapped = four([Some(0), Some(1), Some(2), Some(3)]);
+        swapped.boxes.swap(0, 1);
+        swapped.previous = Some(loaded.clone());
+        update(&mut conn, 2, &swapped).unwrap();
+        // Tab A still has the old boxes: its origins look valid but no longer match.
+        let mut stale = four([Some(0), Some(1), Some(2), Some(3)]);
+        stale.previous = Some(loaded);
+        assert_eq!(invalid(update(&mut conn, 2, &stale)), "origin");
+        let boxes: Vec<i64> = progress(&conn).iter().map(|p| p.1).collect();
+        assert_eq!(boxes, vec![1, 0, 2, 3]); // as tab B left it
     }
 
     #[test]
