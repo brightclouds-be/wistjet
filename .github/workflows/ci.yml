@@ -20,3 +20,6 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      # Spec §11's end-to-end test, in the Chrome that GitHub's Ubuntu runners include.
+      - run: cargo build --release
+      - run: node e2e/e2e.mjs target/release/wistjet
