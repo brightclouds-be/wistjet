@@ -1,0 +1,31 @@
+# Wistjet with Docker Compose:
+#
+#   docker compose up -d
+#   docker compose logs wistjet     # shows the setup code for the first run
+#
+# Then open http://<this machine>:8080 and finish setup. All data lives in the
+# `wistjet-data` volume; back it up, or let Wistjet back up daily to a folder of your choice.
+services:
+  wistjet:
+    image: ghcr.io/brightclouds-be/wistjet:latest
+    # Or build it yourself from this folder:
+    # build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # The address tablets use, shown during setup. Fill in this machine's address.
+      # WISTJET_PUBLIC_URL: "http://192.168.1.10:8080"
+      # Extra host names that may reach Wistjet (e.g. behind a reverse proxy).
+      # WISTJET_HOSTS: "wistjet.thuis"
+      # Daily backups to a NAS folder (mounted below) instead of inside the data volume.
+      # WISTJET_BACKUP_DIR: "/backups"
+      # How many daily backups to keep.
+      WISTJET_BACKUP_KEEP: "14"
+    volumes:
+      - wistjet-data:/data
+      # The folder must be writable by user id 65532, the user Wistjet runs as.
+      # - /mnt/nas/wistjet-backups:/backups
+
+volumes:
+  wistjet-data:
