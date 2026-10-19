@@ -14,6 +14,9 @@ pub enum Error {
     /// Names the offending field, as sent by the client.
     Invalid(&'static str),
     NotFound,
+    /// Not allowed in this state, with a count where it helps explain why
+    /// (e.g. `("in_use", 3)`: a study system used by 3 decks).
+    Refused(&'static str, i64),
     Db(rusqlite::Error),
 }
 
@@ -138,32 +141,6 @@ pub fn update_subject(conn: &Connection, id: i64, s: &SubjectInput) -> Result<()
         "UPDATE subject SET name = ?2, archived = ?3 WHERE id = ?1",
         params![id, name, s.archived],
     )?)
-}
-
-// ---- study systems (read-only here; the editor is Plan 4b) ----
-
-#[derive(Debug, PartialEq, Eq, Serialize)]
-pub struct SystemRow {
-    pub id: i64,
-    pub name: String,
-    pub preset: bool,
-    pub boxes: i64,
-}
-
-pub fn list_systems(conn: &Connection) -> Result<Vec<SystemRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT s.id, s.name, s.is_preset, (SELECT count(*) FROM box b WHERE b.system_id = s.id)
-         FROM study_system s ORDER BY s.is_preset DESC, s.name",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(SystemRow {
-            id: r.get(0)?,
-            name: r.get(1)?,
-            preset: r.get(2)?,
-            boxes: r.get(3)?,
-        })
-    })?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 // ---- decks ----
@@ -748,20 +725,6 @@ mod tests {
                 }
             )),
             "name"
-        );
-    }
-
-    #[test]
-    fn systems_list_shows_the_preset() {
-        let conn = fixture();
-        assert_eq!(
-            list_systems(&conn).unwrap(),
-            vec![SystemRow {
-                id: 1,
-                name: "School 4-box".into(),
-                preset: true,
-                boxes: 4
-            }]
         );
     }
 

@@ -40,6 +40,11 @@ fn fail(e: Error) -> Response {
         )
             .into_response(),
         Error::NotFound => error(StatusCode::NOT_FOUND, "not_found"),
+        Error::Refused(code, count) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": code, "count": count })),
+        )
+            .into_response(),
         Error::Db(e) => internal(e),
     }
 }
@@ -91,7 +96,7 @@ async fn update_subject(
 }
 
 async fn list_systems(State(s): State<Shared>) -> Response {
-    ok(manage::list_systems(&s.db.lock().unwrap()))
+    ok(crate::systems::list(&s.db.lock().unwrap()))
 }
 
 async fn list_decks(State(s): State<Shared>) -> Response {
