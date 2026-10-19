@@ -90,11 +90,33 @@ pub fn restore(live: &mut Connection, bytes: &[u8]) -> Result<(), RestoreError> 
         OpenError::TooNew { .. } => RestoreError::TooNew,
         _ => RestoreError::NotABackup,
     })?;
-    if !family::is_set_up(&source)? {
+    if !family::is_set_up(&source)? || !trustworthy(&source)? {
         return Err(RestoreError::NotABackup);
     }
     Backup::new(&source, live)?.run_to_completion(256, Duration::ZERO, None)?;
     Ok(())
+}
+
+/// A backup is only trusted if its tables are exactly this version's (so every CHECK and
+/// foreign key applies to what it holds) and SQLite finds no damage or broken references.
+/// A file with its own table definitions could otherwise carry, say, an HTML "image".
+fn trustworthy(source: &Connection) -> Result<bool, RestoreError> {
+    let schema = |conn: &Connection| -> rusqlite::Result<Vec<(String, String, Option<String>)>> {
+        conn.prepare(
+            "SELECT type, name, sql FROM sqlite_schema
+             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect()
+    };
+    let fresh =
+        db::open_in_memory().map_err(|e| RestoreError::Io(io::Error::other(format!("{e:?}"))))?;
+    if schema(source)? != schema(&fresh)? {
+        return Ok(false);
+    }
+    let integrity: String = source.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    let broken_reference: bool = source.prepare("PRAGMA foreign_key_check")?.exists([])?;
+    Ok(integrity == "ok" && !broken_reference)
 }
 
 /// Makes today's automatic backup in `dir` unless it exists, then keeps only the newest
@@ -296,6 +318,47 @@ mod tests {
             ));
             assert_eq!(dump(&conn), before);
         }
+    }
+
+    /// A backup of `family()`, changed by `sql` with constraints and foreign keys off.
+    fn tampered(sql: &str) -> Vec<u8> {
+        let tmp = scratch().unwrap();
+        let path = tmp.path().join("tampered.db");
+        write_backup(&family(), &path).unwrap();
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(&format!("PRAGMA foreign_keys = OFF; {sql}"))
+            .unwrap();
+        fs::read(&path).unwrap()
+    }
+
+    #[test]
+    fn a_backup_with_its_own_table_definitions_is_refused() {
+        // Without the CHECK on image types, a backup could carry an HTML "image".
+        let bytes = tampered(
+            "CREATE TABLE image2 (id INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL);
+             INSERT INTO image2 VALUES (9, 'text/html', '<script>alert(1)</script>');
+             DROP TABLE image;
+             ALTER TABLE image2 RENAME TO image;",
+        );
+        let mut conn = family();
+        let before = dump(&conn);
+        assert!(matches!(
+            restore(&mut conn, &bytes),
+            Err(RestoreError::NotABackup)
+        ));
+        assert_eq!(dump(&conn), before);
+    }
+
+    #[test]
+    fn a_backup_with_broken_references_is_refused() {
+        let bytes =
+            tampered("INSERT INTO card (deck_id, front_text, back_text) VALUES (999, 'x', 'y');");
+        let mut conn = family();
+        assert!(matches!(
+            restore(&mut conn, &bytes),
+            Err(RestoreError::NotABackup)
+        ));
     }
 
     #[test]

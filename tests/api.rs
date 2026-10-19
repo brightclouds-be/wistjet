@@ -1127,3 +1127,34 @@ async fn backup_status_without_automatic_backups() {
     let r = call(&app, "GET", "/api/parent/backups", Some(&c), None).await;
     assert_eq!(r.json(), json!({ "dir": null, "keep": 0, "latest": null }));
 }
+
+#[tokio::test]
+async fn only_real_image_types_are_served_and_sandboxed() {
+    let (app, state) = app_and_state();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO image (id, mime, data) VALUES (1, 'image/png', x'89504E47');
+             PRAGMA ignore_check_constraints = ON;
+             INSERT INTO image (id, mime, data) VALUES (2, 'text/html', CAST('<script>alert(1)</script>' AS BLOB));
+             PRAGMA ignore_check_constraints = OFF;",
+        )
+        .unwrap();
+    let req = |id: i64| {
+        Request::builder()
+            .uri(format!("/api/images/{id}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let res = app.clone().oneshot(req(1)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let csp = res.headers()[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(csp.contains("sandbox"), "{csp}");
+    let res = app.clone().oneshot(req(2)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

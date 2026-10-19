@@ -314,17 +314,26 @@ async fn answer(State(s): State<Shared>, Json(b): Json<AnswerBody>) -> Response 
     }
 }
 
+/// Image types a card may show; anything else in the database (only possible through a
+/// tampered backup) is never served, so it can't run as a page on Wistjet's address.
+const IMAGE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+
 async fn image(State(s): State<Shared>, Path(id): Path<i64>) -> Response {
     match study::image(&s.db.lock().unwrap(), id) {
-        Ok(Some((mime, data))) => (
+        Ok(Some((mime, data))) if IMAGE_TYPES.contains(&mime.as_str()) => (
             [
                 (header::CONTENT_TYPE, mime),
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+                // Opened directly, an image still can't run script or load anything.
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    "default-src 'none'; sandbox".to_string(),
+                ),
             ],
             data,
         )
             .into_response(),
-        Ok(None) => error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(_) => error(StatusCode::NOT_FOUND, "not_found"),
         Err(e) => internal(e),
     }
 }
