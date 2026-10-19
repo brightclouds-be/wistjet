@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 use rusqlite::backup::Backup;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use std::{fs, io};
 
 pub const DEFAULT_KEEP: usize = 14;
@@ -43,12 +43,18 @@ impl From<rusqlite::Error> for RestoreError {
     }
 }
 
-/// A fresh path in the system temp folder.
-fn temp_path(what: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    std::env::temp_dir().join(format!("wistjet-{what}-{}-{nanos}.db", std::process::id()))
+/// A private folder (only this user can open it, `0700` on Unix) for one backup or restore,
+/// deleted when dropped. A predictable name in the shared temp folder would let other users
+/// on the machine read the family's data or plant a link where the file is written.
+fn scratch() -> io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("wistjet-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir()
 }
 
 /// Removes a database file and the WAL files SQLite may have left next to it.
@@ -67,33 +73,28 @@ pub fn write_backup(conn: &Connection, path: &Path) -> rusqlite::Result<()> {
 /// The whole database as one file, for "Download back-up".
 // ponytail: built in memory; fine for a family's cards and photos, stream from disk if it ever isn't.
 pub fn backup_bytes(conn: &Connection) -> io::Result<Vec<u8>> {
-    let path = temp_path("download");
-    let bytes = write_backup(conn, &path)
-        .map_err(io::Error::other)
-        .and_then(|()| fs::read(&path));
-    remove_db_files(&path);
-    bytes
+    let dir = scratch()?;
+    let path = dir.path().join("backup.db");
+    write_backup(conn, &path).map_err(io::Error::other)?;
+    fs::read(&path)
 }
 
 /// Replaces all data in `live` with the backup in `bytes` (spec §9.2). The file is checked
 /// and migrated to the current schema in a temporary copy, so an older backup restores into
 /// this version and a bad file leaves the live data untouched.
 pub fn restore(live: &mut Connection, bytes: &[u8]) -> Result<(), RestoreError> {
-    let path = temp_path("restore");
+    let dir = scratch()?; // deleted, with the copy in it, when this function returns
+    let path = dir.path().join("restore.db");
     fs::write(&path, bytes)?;
-    let result = (|| {
-        let source = db::open(&path).map_err(|e| match e {
-            OpenError::TooNew { .. } => RestoreError::TooNew,
-            _ => RestoreError::NotABackup,
-        })?;
-        if !family::is_set_up(&source)? {
-            return Err(RestoreError::NotABackup);
-        }
-        Backup::new(&source, live)?.run_to_completion(256, Duration::ZERO, None)?;
-        Ok(())
-    })();
-    remove_db_files(&path);
-    result
+    let source = db::open(&path).map_err(|e| match e {
+        OpenError::TooNew { .. } => RestoreError::TooNew,
+        _ => RestoreError::NotABackup,
+    })?;
+    if !family::is_set_up(&source)? {
+        return Err(RestoreError::NotABackup);
+    }
+    Backup::new(&source, live)?.run_to_completion(256, Duration::ZERO, None)?;
+    Ok(())
 }
 
 /// Makes today's automatic backup in `dir` unless it exists, then keeps only the newest
@@ -236,10 +237,13 @@ mod tests {
         rows
     }
 
-    fn a_dir(name: &str) -> PathBuf {
-        let dir = temp_path(name);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    #[cfg(unix)]
+    #[test]
+    fn scratch_space_is_private_to_this_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch().unwrap();
+        let mode = fs::metadata(dir.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
     }
 
     #[test]
@@ -272,14 +276,13 @@ mod tests {
         let before = dump(&conn);
         let empty_install = backup_bytes(&db::open_in_memory().unwrap()).unwrap();
         let other_app = {
-            let path = temp_path("other");
+            let tmp = scratch().unwrap();
+            let path = tmp.path().join("other.db");
             Connection::open(&path)
                 .unwrap()
                 .execute_batch("CREATE TABLE notes (x)")
                 .unwrap();
-            let bytes = fs::read(&path).unwrap();
-            remove_db_files(&path);
-            bytes
+            fs::read(&path).unwrap()
         };
         for bytes in [
             b"not a database at all".to_vec(),
@@ -298,14 +301,14 @@ mod tests {
     #[test]
     fn a_backup_from_a_newer_version_is_refused() {
         let mut conn = family();
-        let path = temp_path("newer");
+        let tmp = scratch().unwrap();
+        let path = tmp.path().join("newer.db");
         write_backup(&conn, &path).unwrap();
         Connection::open(&path)
             .unwrap()
             .execute_batch("PRAGMA user_version = 99")
             .unwrap();
         let bytes = fs::read(&path).unwrap();
-        remove_db_files(&path);
         assert!(matches!(
             restore(&mut conn, &bytes),
             Err(RestoreError::TooNew)
@@ -315,26 +318,27 @@ mod tests {
     #[test]
     fn one_automatic_backup_per_day() {
         let conn = family();
-        let dir = a_dir("daily");
-        let made = daily(&conn, &dir, d("2026-10-19"), 14).unwrap();
+        let tmp = scratch().unwrap();
+        let dir = tmp.path();
+        let made = daily(&conn, dir, d("2026-10-19"), 14).unwrap();
         assert_eq!(made, Some(dir.join("wistjet-2026-10-19.db")));
-        assert_eq!(daily(&conn, &dir, d("2026-10-19"), 14).unwrap(), None);
+        assert_eq!(daily(&conn, dir, d("2026-10-19"), 14).unwrap(), None);
         // The file is a full backup.
         let copy = db::open(&dir.join("wistjet-2026-10-19.db")).unwrap();
         assert_eq!(dump(&copy), dump(&conn));
-        assert_eq!(latest(&dir).as_deref(), Some("wistjet-2026-10-19.db"));
-        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(latest(dir).as_deref(), Some("wistjet-2026-10-19.db"));
     }
 
     #[test]
     fn only_the_newest_backups_are_kept_and_other_files_are_left_alone() {
-        let dir = a_dir("prune");
+        let tmp = scratch().unwrap();
+        let dir = tmp.path();
         for day in 1..=16 {
             fs::write(dir.join(format!("wistjet-2026-10-{day:02}.db")), b"x").unwrap();
         }
         fs::write(dir.join("notes.txt"), b"mine").unwrap();
-        prune(&dir, 14).unwrap();
-        let mut left: Vec<String> = fs::read_dir(&dir)
+        prune(dir, 14).unwrap();
+        let mut left: Vec<String> = fs::read_dir(dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
@@ -342,6 +346,5 @@ mod tests {
         assert_eq!(left.len(), 15);
         assert_eq!(left[0], "notes.txt");
         assert_eq!(left[1], "wistjet-2026-10-03.db");
-        fs::remove_dir_all(&dir).unwrap();
     }
 }
