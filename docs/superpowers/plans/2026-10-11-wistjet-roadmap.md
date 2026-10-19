@@ -70,14 +70,16 @@ has landed, so it can build on the real interfaces instead of guessed ones.
 5. **Data safety & distribution**, in two plans:
    - **5a, backup, restore & end-to-end test:** backup download and restore (older
      backups upgrade on restore), daily automatic backups with retention (§9.2), the
-     §11 end-to-end test in CI. → `2026-10-19-plan-5a-backup-restore-e2e.md`
-   - **5b, distribution:** `cargo-dist` desktop releases with a tray icon and no console
-     window on Windows, Docker image, `compose.yaml`, Kubernetes example, README
-     (install, upgrade, backup, no-internet warning) (§9.1).
+     §11 end-to-end test in CI. → `2026-10-19-plan-5a-backup-restore-e2e.md` (done)
+   - **5b, distribution:** release archives for Windows, macOS and Linux (console window,
+     no tray icon), Docker image, `compose.yaml`, Kubernetes example, README (install,
+     upgrade, backup, no-internet warning) (§9.1). → `2026-10-19-plan-5b-distribution.md`
 
-## Open decisions (not blocking Plan 1)
+## Decisions taken during planning
 
-- **License** — the spec says open source but doesn't name one (MIT,
-  Apache-2.0 or GPL-3.0). Needed before the first public release.
-- **Code signing** for macOS/Windows installers — unsigned for the MVP; the
-  README shows how to get past the "unknown developer" warning.
+- **License:** AGPL-3.0 (`AGPL-3.0-only`).
+- **No tray icon:** the console window stays on every platform; it shows the addresses and
+  the setup code.
+- **README in English.**
+- **Code signing** for the macOS/Windows downloads is left out for now; the README walks
+  through the "unknown developer" warnings.
