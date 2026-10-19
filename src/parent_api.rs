@@ -1,8 +1,9 @@
 //! Parent routes for content management (spec §7.2–7.4). `server::router` mounts these
 //! inside the PIN-guarded `/api/parent` router, so every one needs a parent session.
 
-use crate::manage::{self, CardInput, ChildInput, DeckInput, Error, SubjectInput};
-use crate::server::{Shared, error, internal, today};
+use crate::manage::{self, CardInput, ChildInput, DeckInput, Error, Settings, SubjectInput};
+use crate::server::{Shared, error, internal, session_token, today};
+use crate::systems::{self, SystemInput};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -18,7 +19,11 @@ pub fn routes() -> Router<Shared> {
         .route("/children/{id}", put(update_child))
         .route("/subjects", get(list_subjects).post(create_subject))
         .route("/subjects/{id}", put(update_subject))
-        .route("/systems", get(list_systems))
+        .route("/systems", get(list_systems).post(create_system))
+        .route("/systems/{id}", put(update_system).delete(delete_system))
+        .route("/overview", get(overview))
+        .route("/settings", get(settings).put(update_settings))
+        .route("/pin", post(change_pin))
         .route("/decks", get(list_decks).post(create_deck))
         .route("/decks/{id}", put(update_deck))
         .route("/decks/{id}/cards", get(list_cards).post(create_cards))
@@ -96,7 +101,61 @@ async fn update_subject(
 }
 
 async fn list_systems(State(s): State<Shared>) -> Response {
-    ok(crate::systems::list(&s.db.lock().unwrap()))
+    ok(systems::list(&s.db.lock().unwrap()))
+}
+
+async fn create_system(State(s): State<Shared>, Json(b): Json<SystemInput>) -> Response {
+    created(systems::create(&mut s.db.lock().unwrap(), &b))
+}
+
+async fn update_system(
+    State(s): State<Shared>,
+    Path(id): Path<i64>,
+    Json(b): Json<SystemInput>,
+) -> Response {
+    done(systems::update(&mut s.db.lock().unwrap(), id, &b))
+}
+
+async fn delete_system(State(s): State<Shared>, Path(id): Path<i64>) -> Response {
+    done(systems::delete(&s.db.lock().unwrap(), id))
+}
+
+async fn overview(State(s): State<Shared>) -> Response {
+    let conn = s.db.lock().unwrap();
+    match today(&conn) {
+        Ok(Some(t)) => ok(manage::overview(&conn, t)),
+        Ok(None) => error(StatusCode::CONFLICT, "not_set_up"),
+        Err(e) => internal(e),
+    }
+}
+
+async fn settings(State(s): State<Shared>) -> Response {
+    ok(manage::settings(&s.db.lock().unwrap()))
+}
+
+async fn update_settings(State(s): State<Shared>, Json(b): Json<Settings>) -> Response {
+    done(manage::update_settings(&s.db.lock().unwrap(), &b))
+}
+
+#[derive(Deserialize)]
+struct PinChange {
+    current: String,
+    new: String,
+}
+
+/// Changes the PIN and ends every other parent session, so other devices must use the new one.
+async fn change_pin(
+    State(s): State<Shared>,
+    headers: HeaderMap,
+    Json(b): Json<PinChange>,
+) -> Response {
+    let result = manage::change_pin(&s.db.lock().unwrap(), &b.current, &b.new);
+    if result.is_ok()
+        && let Some(token) = session_token(&headers)
+    {
+        s.auth.lock().unwrap().end_other_sessions(token);
+    }
+    done(result)
 }
 
 async fn list_decks(State(s): State<Shared>) -> Response {

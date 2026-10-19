@@ -140,7 +140,7 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "internal")
 }
 
-fn session_token(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn session_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get_all(header::COOKIE)
         .iter()

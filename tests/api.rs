@@ -775,3 +775,219 @@ async fn uploads_a_plain_form_could_send_are_refused() {
         );
     }
 }
+
+// ---- study systems, overview and settings (Plan 4b) ----
+
+fn custom_system() -> Value {
+    json!({
+        "name": "Thuis",
+        "repeat_missed": false,
+        "boxes": [
+            { "name": "Nieuw", "interval_days": 1, "success": 1, "failure": 0 },
+            { "name": "Gekend", "interval_days": 5, "success": 1, "failure": 0 }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn system_overview_and_settings_routes_need_a_parent_session() {
+    let app = app();
+    set_up(&app).await;
+    let routes = [
+        ("POST", "/api/parent/systems"),
+        ("PUT", "/api/parent/systems/1"),
+        ("DELETE", "/api/parent/systems/1"),
+        ("GET", "/api/parent/overview"),
+        ("GET", "/api/parent/settings"),
+        ("PUT", "/api/parent/settings"),
+        ("POST", "/api/parent/pin"),
+    ];
+    for (method, path) in routes {
+        let r = call(&app, method, path, None, Some(json!({}))).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn parent_creates_edits_and_deletes_a_study_system() {
+    let (app, c) = parent().await;
+    let r = call(&app, "GET", "/api/parent/systems", Some(&c), None).await;
+    let preset = r.json()[0].clone();
+    assert_eq!(
+        (
+            preset["preset"].clone(),
+            preset["is_default"].clone(),
+            preset["decks"].clone()
+        ),
+        (json!(true), json!(true), json!(1))
+    );
+    assert_eq!(preset["boxes"].as_array().unwrap().len(), 4);
+
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/systems",
+        Some(&c),
+        Some(custom_system()),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    let id = r.json()["id"].as_i64().unwrap();
+    let path = format!("/api/parent/systems/{id}");
+    let mut edited = custom_system();
+    edited["boxes"][1]["interval_days"] = json!(10);
+    let r = call(&app, "PUT", &path, Some(&c), Some(edited)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+
+    let r = call(
+        &app,
+        "PUT",
+        "/api/parent/systems/1",
+        Some(&c),
+        Some(custom_system()),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()),
+        (
+            StatusCode::CONFLICT,
+            json!({ "error": "preset", "count": 0 })
+        )
+    );
+    let r = call(&app, "DELETE", "/api/parent/systems/1", Some(&c), None).await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+
+    let r = call(&app, "DELETE", &path, Some(&c), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/systems", Some(&c), None).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_system_in_use_says_by_how_many_decks() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/systems",
+        Some(&c),
+        Some(custom_system()),
+    )
+    .await;
+    let id = r.json()["id"].as_i64().unwrap();
+    let deck = json!({ "name": "Voorbeeld", "subject_id": 1, "system_id": id, "direction_mode": "front_to_back", "children": [1] });
+    let r = call(&app, "PUT", "/api/parent/decks/1", Some(&c), Some(deck)).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(
+        &app,
+        "DELETE",
+        &format!("/api/parent/systems/{id}"),
+        Some(&c),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()),
+        (
+            StatusCode::CONFLICT,
+            json!({ "error": "in_use", "count": 1 })
+        )
+    );
+}
+
+#[tokio::test]
+async fn overview_shows_today_per_child() {
+    let (app, c) = parent().await;
+    call(
+        &app,
+        "POST",
+        "/api/answers",
+        None,
+        Some(answer_body("a1", 1)),
+    )
+    .await;
+    let r = call(&app, "GET", "/api/parent/overview", Some(&c), None).await;
+    assert_eq!(
+        r.json(),
+        json!([{
+            "child_id": 1, "name": "Lotte", "avatar": "#e57373",
+            "due": 9, "reviewed": 1, "known": 1, "not_known": 0, "boxes": [9, 1]
+        }])
+    );
+}
+
+#[tokio::test]
+async fn settings_change_name_timezone_and_default_system() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/systems",
+        Some(&c),
+        Some(custom_system()),
+    )
+    .await;
+    let id = r.json()["id"].clone();
+    let body = json!({ "name": "Familie De Smet", "timezone": "Europe/Amsterdam", "default_system_id": id });
+    let r = call(
+        &app,
+        "PUT",
+        "/api/parent/settings",
+        Some(&c),
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/settings", Some(&c), None).await;
+    assert_eq!(r.json(), body);
+    let r = call(&app, "GET", "/api/parent/systems", Some(&c), None).await;
+    let custom = r
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id)
+        .unwrap()
+        .clone();
+    assert_eq!(custom["is_default"], json!(true));
+
+    let mut bad = body;
+    bad["timezone"] = json!("Mars/Olympus");
+    let r = call(&app, "PUT", "/api/parent/settings", Some(&c), Some(bad)).await;
+    assert_eq!(r.json(), json!({ "error": "invalid", "field": "timezone" }));
+}
+
+#[tokio::test]
+async fn changing_the_pin_logs_out_other_devices() {
+    let (app, mine) = parent().await;
+    let other = log_in(&app).await;
+    let wrong = json!({ "current": "1111", "new": "13579" });
+    let r = call(&app, "POST", "/api/parent/pin", Some(&mine), Some(wrong)).await;
+    assert_eq!(
+        r.json(),
+        json!({ "error": "invalid", "field": "current_pin" })
+    );
+
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/pin",
+        Some(&mine),
+        Some(json!({ "current": "2468", "new": "13579" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/session", Some(&mine), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/parent/session", Some(&other), None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/login",
+        None,
+        Some(json!({ "pin": "13579" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+}
