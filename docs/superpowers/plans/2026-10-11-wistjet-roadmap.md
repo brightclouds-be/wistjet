@@ -62,10 +62,11 @@ has landed, so it can build on the real interfaces instead of guessed ones.
 4. **Parent area**, in two plans:
    - **4a, content:** children, subjects, decks, cards with images, paste-a-list with
      preview (§7.5), per-deck box distribution, reset progress (§7.2–7.4, §5.7).
-     → `2026-10-18-plan-4a-parent-content.md`
+     → `2026-10-18-plan-4a-parent-content.md` (done)
    - **4b, systems, overview & settings:** study-system editor with box remapping
      (`engine::remap_positions` applied in one transaction, §7.6), the parent overview
      (§7.1), settings: family name, timezone, change PIN, default system (§7.7).
+     → `2026-10-19-plan-4b-systems-overview-settings.md`
 5. **Data safety & distribution** — backup download/restore, daily automatic
    backup with retention (§9.2), Docker image, `compose.yaml`, k8s example,
    `cargo-dist` releases, tray icon and no console window on Windows, README (install, upgrade, backup, no-internet
