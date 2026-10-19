@@ -60,7 +60,7 @@
         </form>
       {:else}
         <span class="avatar small" style:background={child.avatar}>{initial(child.name)}</span>
-        <span class="grow">{child.name}{#if child.archived}<em> · gearchiveerd</em>{/if}</span>
+        <span class="grow">{child.name}{#if child.archived}<span class="tag">gearchiveerd</span>{/if}</span>
         <button class="secondary" onclick={() => (edit = { id: child.id, name: child.name, avatar: child.avatar })}>
           Wijzig
         </button>

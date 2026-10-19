@@ -3,16 +3,22 @@
   import Children from './parent/Children.svelte'
   import Deck from './parent/Deck.svelte'
   import Decks from './parent/Decks.svelte'
+  import Overview from './parent/Overview.svelte'
+  import Settings from './parent/Settings.svelte'
   import Subjects from './parent/Subjects.svelte'
+  import Systems from './parent/Systems.svelte'
 
   let { route }: { route: string } = $props()
 
-  // #/ouder/kinderen, #/ouder/vakken, #/ouder/decks, #/ouder/decks/<id>
-  const section = $derived(route.match(/^#\/ouder\/(kinderen|vakken|decks)(?:\/(\d+))?/))
+  // #/ouder (overzicht), #/ouder/<tab>, #/ouder/decks/<id>
+  const section = $derived(route.match(/^#\/ouder\/(overzicht|kinderen|vakken|decks|systemen|instellingen)(?:\/(\d+))?/))
   const TABS = [
+    ['overzicht', 'Overzicht'],
     ['kinderen', 'Kinderen'],
     ['vakken', 'Vakken'],
     ['decks', 'Decks'],
+    ['systemen', 'Studiesystemen'],
+    ['instellingen', 'Instellingen'],
   ] as const
 
   const IDLE_MS = 10 * 60 * 1000
@@ -102,18 +108,24 @@
   </header>
   <nav class="tabs">
     {#each TABS as [key, label] (key)}
-      <a href="#/ouder/{key}" aria-current={(section?.[1] ?? 'kinderen') === key ? 'page' : undefined}>{label}</a>
+      <a href="#/ouder/{key}" aria-current={(section?.[1] ?? 'overzicht') === key ? 'page' : undefined}>{label}</a>
     {/each}
   </nav>
   {#key route}
-    {#if section?.[1] === 'vakken'}
+    {#if section?.[1] === 'kinderen'}
+      <Children />
+    {:else if section?.[1] === 'vakken'}
       <Subjects />
     {:else if section?.[1] === 'decks' && section[2]}
       <Deck id={Number(section[2])} />
     {:else if section?.[1] === 'decks'}
       <Decks />
+    {:else if section?.[1] === 'systemen'}
+      <Systems />
+    {:else if section?.[1] === 'instellingen'}
+      <Settings />
     {:else}
-      <Children />
+      <Overview />
     {/if}
   {/key}
 {/if}

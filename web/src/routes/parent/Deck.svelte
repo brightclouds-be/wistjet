@@ -155,7 +155,7 @@
 {#if missing}
   <p class="card">Dit deck bestaat niet.</p>
 {:else if deck && settings}
-  <h2 class="deck-title">{deck.name}{#if deck.archived}<em class="muted"> · gearchiveerd</em>{/if}</h2>
+  <h2 class="deck-title">{deck.name}{#if deck.archived}<span class="tag">gearchiveerd</span>{/if}</h2>
   {#if saved}<p class="saved" role="status">{saved}</p>{/if}
 
   <section class="card">
@@ -173,7 +173,7 @@
               <span class="muted">→</span>
               {@render side(card.back_text, card.back_image)}
               {#if card.notes}<span class="muted note">{card.notes}</span>{/if}
-              {#if !card.active}<em> · uit</em>{/if}
+              {#if !card.active}<span class="tag">uit</span>{/if}
             </span>
             <button class="secondary" onclick={() => startEdit(card)}>Wijzig</button>
             <button class="secondary" onclick={() => setActive(card, !card.active)}>

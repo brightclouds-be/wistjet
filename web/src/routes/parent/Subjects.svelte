@@ -53,7 +53,7 @@
           <button type="submit">Bewaar</button>
         </form>
       {:else}
-        <span class="grow">{subject.name}{#if subject.archived}<em> · gearchiveerd</em>{/if}</span>
+        <span class="grow">{subject.name}{#if subject.archived}<span class="tag">gearchiveerd</span>{/if}</span>
         <button class="secondary" onclick={() => (edit = { id: subject.id, name: subject.name })}>Wijzig</button>
         <button class="secondary" onclick={() => setArchived(subject, !subject.archived)}>
           {subject.archived ? 'Zet terug' : 'Archiveer'}

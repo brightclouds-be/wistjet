@@ -50,12 +50,12 @@
 {#each subjects as subject (subject.id)}
   {@const own = decks.filter((d) => d.subject_id === subject.id)}
   {#if own.length > 0}
-    <h2>{subject.name}{#if subject.archived}<em class="muted"> · gearchiveerd</em>{/if}</h2>
+    <h2>{subject.name}{#if subject.archived}<span class="tag">gearchiveerd</span>{/if}</h2>
     <ul class="rows">
       {#each own as deck (deck.id)}
         <li class="row" class:archived={deck.archived}>
           <a class="grow deck-link" href="#/ouder/decks/{deck.id}">
-            <strong>{deck.name}</strong>{#if deck.archived}<em> · gearchiveerd</em>{/if}
+            <strong>{deck.name}</strong>{#if deck.archived}<span class="tag">gearchiveerd</span>{/if}
             <span class="muted">{deck.cards} kaartjes · {names(deck.children)}</span>
           </a>
         </li>

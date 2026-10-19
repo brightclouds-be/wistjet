@@ -73,7 +73,7 @@ label {
   font-weight: 600;
 }
 
-input:not([type='radio']),
+input:not([type='radio'], [type='checkbox']),
 select {
   display: block;
   width: 100%;
@@ -477,11 +477,13 @@ h2 {
 .tabs {
   display: flex;
   gap: 8px;
+  overflow-x: auto;
   margin-bottom: 20px;
   border-bottom: 1px solid var(--line);
 }
 
 .tabs a {
+  white-space: nowrap;
   padding: 10px 16px;
   color: var(--muted);
   font-weight: 700;
@@ -689,4 +691,133 @@ tr.skipped td:last-child {
 .saved {
   color: var(--yes);
   font-weight: 700;
+}
+
+.block {
+  display: block;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.boxes input,
+.boxes select {
+  margin-top: 0;
+  min-width: 90px;
+}
+
+.boxes input[type='number'] {
+  min-width: 70px;
+  width: 80px;
+}
+
+.box-actions {
+  white-space: nowrap;
+}
+
+.box-actions button {
+  min-width: 36px;
+  padding: 6px 10px;
+}
+
+.notices {
+  margin: 16px 0 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.notices p,
+.notices ul {
+  margin: 0;
+}
+
+.overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.overview .card {
+  margin: 0;
+}
+
+.overview .greeting {
+  font-size: 1.3rem;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.stats div {
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.stats dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.stats dd {
+  margin: 2px 0 0;
+  font-size: 1.6rem;
+  font-weight: 800;
+}
+
+.box-counts {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.box-counts li {
+  display: grid;
+  grid-template-columns: 4.5em 1fr 2.5em;
+  align-items: center;
+  gap: 8px;
+}
+
+.box-counts .label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.box-counts .track {
+  height: 10px;
+}
+
+.box-counts .bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--accent);
+  border-radius: 0 4px 4px 0;
+}
+
+.box-counts .count {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A small label after a name: gearchiveerd, uit, vast, standaard. */
+.tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  vertical-align: middle;
 }
