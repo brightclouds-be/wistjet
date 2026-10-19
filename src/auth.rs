@@ -97,6 +97,11 @@ impl Auth {
     pub fn logout(&mut self, token: &str) {
         self.sessions.remove(token);
     }
+
+    /// Ends every session but `keep` (after a PIN change, other devices log in again).
+    pub fn end_other_sessions(&mut self, keep: &str) {
+        self.sessions.retain(|token, _| token == keep);
+    }
 }
 
 #[cfg(test)]
@@ -189,6 +194,17 @@ mod tests {
         assert!(auth.touch(&t, t0 + mins(18))); // activity keeps it alive
         assert!(!auth.touch(&t, t0 + mins(28)));
         assert!(!auth.touch(&t, t0 + mins(18))); // gone for good
+    }
+
+    #[test]
+    fn pin_change_keeps_only_the_current_session() {
+        let mut auth = Auth::default();
+        let t0 = Instant::now();
+        let mine = token(auth.login(t0, || true));
+        let other = token(auth.login(t0, || true));
+        auth.end_other_sessions(&mine);
+        assert!(auth.touch(&mine, t0));
+        assert!(!auth.touch(&other, t0));
     }
 
     #[test]

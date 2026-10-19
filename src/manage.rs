@@ -1,9 +1,11 @@
 //! What the parent manages (spec §7.2–7.4): children, subjects, decks, cards and images.
 //! Nothing here deletes: archiving and deactivating hide things and keep progress (§5.8).
 
+use crate::auth;
 use crate::family::{clean_name, valid_avatar};
 use crate::store::{self, VISIBLE};
 use chrono::NaiveDate;
+use chrono_tz::Tz;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, named_params, params};
 use serde::{Deserialize, Serialize};
 
@@ -573,6 +575,140 @@ pub fn reset(
     Ok(store::reset_progress(conn, deck_id, child_id, today)?)
 }
 
+// ---- overview ----
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct ChildOverview {
+    pub child_id: i64,
+    pub name: String,
+    pub avatar: String,
+    pub due: i64,
+    /// Scheduling answers today, and how many of those were "known".
+    pub reviewed: i64,
+    pub known: i64,
+    pub not_known: i64,
+    /// Active card directions per box position, over all decks (spec §7.1).
+    pub boxes: Vec<i64>,
+}
+
+/// The parent's start page (spec §7.1), per active child.
+pub fn overview(conn: &Connection, today: NaiveDate) -> Result<Vec<ChildOverview>> {
+    let mut children =
+        conn.prepare("SELECT id, name, avatar FROM child WHERE archived = 0 ORDER BY id")?;
+    let children = children
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut per_box = conn.prepare(&format!(
+        "SELECT COALESCE(p.box_position, 0), count(*), sum(COALESCE(p.due_date, :today) <= :today)
+         {VISIBLE} GROUP BY 1 ORDER BY 1"
+    ))?;
+    children
+        .into_iter()
+        .map(|(child_id, name, avatar)| {
+            let mut boxes: Vec<i64> = vec![];
+            let mut due = 0;
+            let rows =
+                per_box.query_map(named_params! { ":child": child_id, ":today": today }, |r| {
+                    Ok((
+                        r.get::<_, usize>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })?;
+            for row in rows {
+                let (pos, count, due_here) = row?;
+                if boxes.len() <= pos {
+                    boxes.resize(pos + 1, 0);
+                }
+                boxes[pos] += count;
+                due += due_here;
+            }
+            let (reviewed, known): (i64, i64) = conn.query_row(
+                "SELECT count(*), COALESCE(sum(known), 0) FROM review_log
+                 WHERE child_id = ?1 AND local_date = ?2",
+                params![child_id, today],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok(ChildOverview {
+                child_id,
+                name,
+                avatar,
+                due,
+                reviewed,
+                known,
+                not_known: reviewed - known,
+                boxes,
+            })
+        })
+        .collect()
+}
+
+// ---- settings ----
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Settings {
+    pub name: String,
+    pub timezone: String,
+    pub default_system_id: i64,
+}
+
+pub fn settings(conn: &Connection) -> Result<Settings> {
+    conn.query_row(
+        "SELECT name, timezone, default_system_id FROM family",
+        [],
+        |r| {
+            Ok(Settings {
+                name: r.get(0)?,
+                timezone: r.get(1)?,
+                default_system_id: r.get(2)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or(Error::NotFound)
+}
+
+/// Family name, timezone and default study system (spec §7.6, §7.7).
+pub fn update_settings(conn: &Connection, s: &Settings) -> Result<()> {
+    let name = clean_name(&s.name).ok_or(Error::Invalid("name"))?;
+    s.timezone
+        .parse::<Tz>()
+        .map_err(|_| Error::Invalid("timezone"))?;
+    if !exists(
+        conn,
+        "SELECT EXISTS(SELECT 1 FROM study_system WHERE id = ?1)",
+        s.default_system_id,
+    )? {
+        return Err(Error::Invalid("default_system_id"));
+    }
+    found(conn.execute(
+        "UPDATE family SET name = ?1, timezone = ?2, default_system_id = ?3",
+        params![name, s.timezone, s.default_system_id],
+    )?)
+}
+
+/// Changes the PIN; the current PIN must be given (spec §7.7).
+pub fn change_pin(conn: &Connection, current: &str, new: &str) -> Result<()> {
+    let hash: String = conn
+        .query_row("SELECT pin_hash FROM family", [], |r| r.get(0))
+        .optional()?
+        .ok_or(Error::NotFound)?;
+    if !auth::verify_pin(current, &hash) {
+        return Err(Error::Invalid("current_pin"));
+    }
+    if !auth::valid_pin(new) {
+        return Err(Error::Invalid("pin"));
+    }
+    conn.execute("UPDATE family SET pin_hash = ?1", [auth::hash_pin(new)])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,5 +1122,101 @@ mod tests {
             reset(&conn, 9, None, d(TODAY)),
             Err(Error::NotFound)
         ));
+    }
+
+    fn family(conn: &mut Connection) {
+        crate::family::create(
+            conn,
+            &crate::family::Setup {
+                family_name: "De Smet".into(),
+                timezone: "Europe/Brussels".into(),
+                pin: "2468".into(),
+                child_name: "Lotte".into(),
+                child_avatar: "#e57373".into(),
+                sample_deck: true,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn overview_counts_today_and_boxes_per_child() {
+        let mut conn = db::open_in_memory().unwrap();
+        family(&mut conn); // Lotte with the 10-card sample deck
+        let a = |id: &str, card_id, known| Answer {
+            id: id.into(),
+            child_id: 1,
+            card_id,
+            direction: 0,
+            known,
+        };
+        let now = "2026-10-18T09:00:00Z".parse().unwrap();
+        record_answer(&mut conn, &a("a1", 1, true), now, d(TODAY)).unwrap();
+        record_answer(&mut conn, &a("a2", 2, false), now, d(TODAY)).unwrap();
+        assert_eq!(
+            overview(&conn, d(TODAY)).unwrap(),
+            vec![ChildOverview {
+                child_id: 1,
+                name: "Lotte".into(),
+                avatar: "#e57373".into(),
+                due: 8,
+                reviewed: 2,
+                known: 1,
+                not_known: 1,
+                boxes: vec![9, 1],
+            }]
+        );
+    }
+
+    #[test]
+    fn settings_are_read_and_checked() {
+        let mut conn = db::open_in_memory().unwrap();
+        assert!(matches!(settings(&conn), Err(Error::NotFound)));
+        family(&mut conn);
+        let s = Settings {
+            name: "Familie De Smet".into(),
+            timezone: "Europe/Amsterdam".into(),
+            default_system_id: 1,
+        };
+        update_settings(&conn, &s).unwrap();
+        assert_eq!(settings(&conn).unwrap(), s);
+        for (field, bad) in [
+            (
+                "name",
+                Settings {
+                    name: "".into(),
+                    ..settings(&conn).unwrap()
+                },
+            ),
+            (
+                "timezone",
+                Settings {
+                    timezone: "Mars/Olympus".into(),
+                    ..settings(&conn).unwrap()
+                },
+            ),
+            (
+                "default_system_id",
+                Settings {
+                    default_system_id: 9,
+                    ..settings(&conn).unwrap()
+                },
+            ),
+        ] {
+            assert_eq!(invalid(update_settings(&conn, &bad)), field);
+        }
+    }
+
+    #[test]
+    fn pin_change_needs_the_current_pin() {
+        let mut conn = db::open_in_memory().unwrap();
+        family(&mut conn);
+        assert_eq!(invalid(change_pin(&conn, "1111", "13579")), "current_pin");
+        assert_eq!(invalid(change_pin(&conn, "2468", "12")), "pin");
+        change_pin(&conn, "2468", "13579").unwrap();
+        let hash: String = conn
+            .query_row("SELECT pin_hash FROM family", [], |r| r.get(0))
+            .unwrap();
+        assert!(auth::verify_pin("13579", &hash) && !auth::verify_pin("2468", &hash));
     }
 }
