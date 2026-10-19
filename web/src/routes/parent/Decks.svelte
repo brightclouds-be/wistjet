@@ -2,11 +2,11 @@
   import DeckForm from '../../components/DeckForm.svelte'
   import { api } from '../../lib/api'
   import { problem } from '../../lib/messages'
-  import type { ChildRow, DeckInput, DeckRow, SubjectRow, SystemRow } from '../../lib/types'
+  import type { ChildRow, DeckInput, DeckRow, SubjectRow, SystemDetail } from '../../lib/types'
 
   let decks = $state<DeckRow[]>([])
   let subjects = $state<SubjectRow[]>([])
-  let systems = $state<SystemRow[]>([])
+  let systems = $state<SystemDetail[]>([])
   let children = $state<ChildRow[]>([])
   let draft = $state<DeckInput | null>(null)
   let error = $state('')
@@ -15,7 +15,7 @@
     ;[decks, subjects, systems, children] = await Promise.all([
       api<DeckRow[]>('parent/decks'),
       api<SubjectRow[]>('parent/subjects'),
-      api<SystemRow[]>('parent/systems'),
+      api<SystemDetail[]>('parent/systems'),
       api<ChildRow[]>('parent/children'),
     ])
     const subject = subjects.find((s) => !s.archived)
@@ -23,7 +23,7 @@
       ? {
           name: '',
           subject_id: subject.id,
-          system_id: systems[0]?.id ?? 1,
+          system_id: (systems.find((s) => s.is_default) ?? systems[0])?.id ?? 1,
           direction_mode: 'front_to_back',
           children: children.filter((c) => !c.archived).map((c) => c.id),
           archived: false,

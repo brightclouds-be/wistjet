@@ -4,7 +4,7 @@
   import { api } from '../../lib/api'
   import { problem } from '../../lib/messages'
   import { parsePaste, type Pasted } from '../../lib/paste'
-  import type { CardInput, CardRow, ChildProgress, ChildRow, DeckInput, DeckRow, SubjectRow, SystemRow } from '../../lib/types'
+  import type { CardInput, CardRow, ChildProgress, ChildRow, DeckInput, DeckRow, SubjectRow, SystemDetail } from '../../lib/types'
 
   let { id }: { id: number } = $props()
 
@@ -20,7 +20,7 @@
   let deck = $state<DeckRow | null>(null)
   let missing = $state(false)
   let subjects = $state<SubjectRow[]>([])
-  let systems = $state<SystemRow[]>([])
+  let systems = $state<SystemDetail[]>([])
   let children = $state<ChildRow[]>([])
   let cards = $state<CardRow[]>([])
   let progress = $state<ChildProgress[]>([])
@@ -43,7 +43,7 @@
     const [decks, s, sy, ch] = await Promise.all([
       api<DeckRow[]>('parent/decks'),
       api<SubjectRow[]>('parent/subjects'),
-      api<SystemRow[]>('parent/systems'),
+      api<SystemDetail[]>('parent/systems'),
       api<ChildRow[]>('parent/children'),
     ])
     deck = decks.find((d) => d.id === id) ?? null

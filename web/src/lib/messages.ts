@@ -15,6 +15,23 @@ const FIELD: Record<string, string> = {
   image_type: 'Kies een JPEG-, PNG-, WebP- of GIF-afbeelding.',
   image_size: 'Een afbeelding is hoogstens 5 MB.',
   child_id: 'Dat kind oefent dit deck niet.',
+  box_name: 'Elk bakje heeft een naam van hoogstens 50 tekens nodig.',
+  interval_days: 'Een bakje komt terug na 1 tot 365 dagen.',
+  target: 'Elk bakje moet naar een bakje van dit systeem verwijzen.',
+  boxes: 'Een studiesysteem heeft 1 tot 12 bakjes.',
+  origin: 'Het studiesysteem is intussen gewijzigd. Laad de pagina opnieuw.',
+  timezone: 'Kies een tijdzone uit de lijst.',
+  default_system_id: 'Kies een bestaand studiesysteem.',
+  current_pin: 'De huidige pincode klopt niet.',
+  pin: 'De nieuwe pincode bestaat uit 4 tot 8 cijfers.',
+}
+
+/** Why the server refused (409), for refusals a parent can act on. */
+function refusal(code: string | undefined, count: number): string | null {
+  if (code === 'preset') return 'Het vaste studiesysteem kan niet gewijzigd of verwijderd worden. Maak een kopie.'
+  if (code === 'default') return 'Dit is het standaardsysteem. Kies eerst een ander systeem als standaard.'
+  if (code === 'in_use') return `Dit studiesysteem wordt gebruikt door ${count} ${count === 1 ? 'deck' : 'decks'}.`
+  return null
 }
 
 /** A Dutch sentence for a failed parent action. */
@@ -22,6 +39,8 @@ export function problem(err: unknown): string {
   if (err instanceof ApiError) {
     const field = err.body?.field
     if (field && field in FIELD) return FIELD[field]
+    const refused = err.status === 409 ? refusal(err.body?.error, err.body?.count ?? 0) : null
+    if (refused) return refused
     if (err.status === 404) return 'Dit bestaat niet meer. Laad de pagina opnieuw.'
   }
   return 'Opslaan lukte niet. Probeer het opnieuw.'

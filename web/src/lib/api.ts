@@ -1,5 +1,5 @@
-/** Error body the server sends: `{ error, field?, retry_after? }`. */
-export type ErrorBody = { error?: string; field?: string; retry_after?: number } | null
+/** Error body the server sends: `{ error, field?, retry_after?, count? }`. */
+export type ErrorBody = { error?: string; field?: string; retry_after?: number; count?: number } | null
 
 export class ApiError extends Error {
   constructor(

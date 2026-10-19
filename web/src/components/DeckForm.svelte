@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ChildRow, DeckInput, SubjectRow, SystemRow } from '../lib/types'
+  import type { ChildRow, DeckInput, SubjectRow, SystemDetail } from '../lib/types'
 
   let {
     deck = $bindable(),
@@ -11,7 +11,7 @@
   }: {
     deck: DeckInput
     subjects: SubjectRow[]
-    systems: SystemRow[]
+    systems: SystemDetail[]
     children: ChildRow[]
     submitLabel: string
     onsubmit: () => void
@@ -44,7 +44,7 @@
   <label>
     Studiesysteem
     <select bind:value={deck.system_id}>
-      {#each systems as s (s.id)}<option value={s.id}>{s.name} ({s.boxes} bakjes)</option>{/each}
+      {#each systems as s (s.id)}<option value={s.id}>{s.name} ({s.boxes.length} bakjes)</option>{/each}
     </select>
   </label>
   <fieldset class="choices">
