@@ -35,7 +35,8 @@ export async function download(path: string, fallbackName: string): Promise<void
   const url = URL.createObjectURL(await res.blob())
   const link = Object.assign(document.createElement('a'), { href: url, download: name })
   link.click()
-  URL.revokeObjectURL(url)
+  // Freed later: revoking straight after click() can cancel the download in Safari.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<T> {

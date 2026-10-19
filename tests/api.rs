@@ -1090,7 +1090,7 @@ async fn the_download_is_named_after_today() {
         .unwrap()
         .to_string();
     assert!(
-        disposition.starts_with("attachment; filename=\"wistjet-20"),
+        disposition.starts_with("attachment; filename=\"wistjet-back-up-20"),
         "{disposition}"
     );
     assert!(disposition.ends_with(".db\""), "{disposition}");

@@ -9,6 +9,7 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 use rusqlite::backup::Backup;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 use std::{fs, io};
 
@@ -57,13 +58,6 @@ fn scratch() -> io::Result<tempfile::TempDir> {
     builder.tempdir()
 }
 
-/// Removes a database file and the WAL files SQLite may have left next to it.
-fn remove_db_files(path: &Path) {
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = fs::remove_file(format!("{}{suffix}", path.display()));
-    }
-}
-
 /// Writes a consistent copy of the database to `path`, which must not exist yet.
 pub fn write_backup(conn: &Connection, path: &Path) -> rusqlite::Result<()> {
     conn.execute("VACUUM INTO ?1", [path.to_string_lossy()])?;
@@ -79,50 +73,104 @@ pub fn backup_bytes(conn: &Connection) -> io::Result<Vec<u8>> {
     fs::read(&path)
 }
 
-/// Replaces all data in `live` with the backup in `bytes` (spec §9.2). The file is checked
-/// and migrated to the current schema in a temporary copy, so an older backup restores into
-/// this version and a bad file leaves the live data untouched.
-pub fn restore(live: &mut Connection, bytes: &[u8]) -> Result<(), RestoreError> {
-    let dir = scratch()?; // deleted, with the copy in it, when this function returns
-    let path = dir.path().join("restore.db");
-    fs::write(&path, bytes)?;
-    let source = db::open(&path).map_err(|e| match e {
+/// A checked backup, rebuilt in this version's own tables, ready to replace the live data.
+pub struct Prepared {
+    /// Keeps the private folder (and the files in it) until the backup is applied.
+    _dir: tempfile::TempDir,
+    clean: Connection,
+}
+
+/// Checks a backup and rebuilds it (spec §9.2, §10). The upload must be Wistjet's and not
+/// from a newer version; an older one is migrated. Its rows are then copied into a fresh
+/// database this version built, so every table definition, CHECK and foreign key is ours,
+/// however the upload words its own SQL (older releases may differ, a tampered file may
+/// leave a CHECK out). Slow, and needs no lock: nothing live is touched.
+pub fn prepare(bytes: &[u8]) -> Result<Prepared, RestoreError> {
+    let dir = scratch()?;
+    let upload = dir.path().join("upload.db");
+    fs::write(&upload, bytes)?;
+    drop(db::open(&upload).map_err(|e| match e {
         OpenError::TooNew { .. } => RestoreError::TooNew,
         _ => RestoreError::NotABackup,
-    })?;
-    if !family::is_set_up(&source)? || !trustworthy(&source)? {
+    })?);
+    let mut clean = db::open(&dir.path().join("clean.db"))
+        .map_err(|e| RestoreError::Io(io::Error::other(format!("{e:?}"))))?;
+    copy_rows(&mut clean, &upload).map_err(|_| RestoreError::NotABackup)?;
+    if !family::is_set_up(&clean)? || !trustworthy(&clean)? {
         return Err(RestoreError::NotABackup);
     }
-    Backup::new(&source, live)?.run_to_completion(256, Duration::ZERO, None)?;
+    Ok(Prepared { _dir: dir, clean })
+}
+
+/// Replaces all live data with a prepared backup in one atomic copy: readers see the old
+/// data or the new, never a mix, and a failure halfway changes nothing.
+pub fn apply(prepared: &Prepared, live: &mut Connection) -> Result<(), RestoreError> {
+    Backup::new(&prepared.clean, live)?.run_to_completion(256, Duration::ZERO, None)?;
     Ok(())
 }
 
-/// A backup is only trusted if its tables are exactly this version's (so every CHECK and
-/// foreign key applies to what it holds) and SQLite finds no damage or broken references.
-/// A file with its own table definitions could otherwise carry, say, an HTML "image".
-fn trustworthy(source: &Connection) -> Result<bool, RestoreError> {
-    let schema = |conn: &Connection| -> rusqlite::Result<Vec<(String, String, Option<String>)>> {
-        conn.prepare(
-            "SELECT type, name, sql FROM sqlite_schema
-             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+/// `prepare` then `apply`, for callers that hold no locks anyway.
+pub fn restore(live: &mut Connection, bytes: &[u8]) -> Result<(), RestoreError> {
+    apply(&prepare(bytes)?, live)
+}
+
+/// Copies every table's rows from `upload` into `clean`'s own tables. Table and column names
+/// come from `clean`'s schema, never from the upload.
+fn copy_rows(clean: &mut Connection, upload: &Path) -> rusqlite::Result<()> {
+    clean.execute_batch("PRAGMA foreign_keys = OFF")?; // rows arrive in any order; checked after
+    clean.execute("ATTACH DATABASE ?1 AS upload", [upload.to_string_lossy()])?;
+    let tables: Vec<String> = clean
+        .prepare(
+            "SELECT name FROM main.sqlite_schema
+             WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
         )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .collect()
-    };
-    let fresh =
-        db::open_in_memory().map_err(|e| RestoreError::Io(io::Error::other(format!("{e:?}"))))?;
-    if schema(source)? != schema(&fresh)? {
-        return Ok(false);
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let tx = clean.transaction()?;
+    for table in &tables {
+        let columns: Vec<String> = tx
+            .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let columns = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        tx.execute(&format!("DELETE FROM main.\"{table}\""), [])?;
+        tx.execute(
+            &format!(
+                "INSERT INTO main.\"{table}\" ({columns}) SELECT {columns} FROM upload.\"{table}\""
+            ),
+            [],
+        )?;
     }
-    let integrity: String = source.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
-    let broken_reference: bool = source.prepare("PRAGMA foreign_key_check")?.exists([])?;
-    Ok(integrity == "ok" && !broken_reference)
+    tx.commit()?;
+    clean.execute("DETACH DATABASE upload", [])?;
+    clean.execute_batch("PRAGMA foreign_keys = ON")
+}
+
+/// No damage, no broken references, and settings the family can still use: a timezone this
+/// version knows and a PIN hash it can check (otherwise nobody could unlock to restore again).
+fn trustworthy(conn: &Connection) -> Result<bool, RestoreError> {
+    let integrity: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+    let broken_reference = conn.prepare("PRAGMA foreign_key_check")?.exists([])?;
+    let (timezone, pin_hash): (String, String) =
+        conn.query_row("SELECT timezone, pin_hash FROM family", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+    Ok(integrity == "ok"
+        && !broken_reference
+        && timezone.parse::<chrono_tz::Tz>().is_ok()
+        && argon2::password_hash::PasswordHash::new(&pin_hash).is_ok())
 }
 
 /// Makes today's automatic backup in `dir` unless it exists, then keeps only the newest
-/// `keep` (spec §9.2). Returns the new file, if one was made.
+/// `keep` (spec §9.2). Only a quick local snapshot holds the database lock; the copy into
+/// `dir` (perhaps a slow or stalled NAS share) happens without it, so children keep
+/// studying meanwhile. Returns the new file, if one was made.
 pub fn daily(
-    conn: &Connection,
+    db: &Mutex<Connection>,
     dir: &Path,
     today: NaiveDate,
     keep: usize,
@@ -132,10 +180,13 @@ pub fn daily(
     let made = if path.exists() {
         None
     } else {
-        // Written under another name first, so a half-written file never looks like a backup.
+        let tmp = scratch()?;
+        let snapshot = tmp.path().join("snapshot.db");
+        write_backup(&db.lock().unwrap(), &snapshot).map_err(io::Error::other)?;
+        // Copied under another name first, so a half-written file never looks like a backup.
         let partial = dir.join(format!(".wistjet-{today}.db.partial"));
-        remove_db_files(&partial);
-        write_backup(conn, &partial).map_err(io::Error::other)?;
+        let _ = fs::remove_file(&partial);
+        fs::copy(&snapshot, &partial)?;
         fs::rename(&partial, &path)?;
         Some(path)
     };
@@ -148,9 +199,9 @@ fn backups(dir: &Path) -> io::Result<Vec<String>> {
     let mut names: Vec<String> = fs::read_dir(dir)?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
         .filter(|n| {
-            n.len() == "wistjet-2026-10-19.db".len()
-                && n.starts_with("wistjet-")
-                && n.ends_with(".db")
+            n.strip_prefix("wistjet-")
+                .and_then(|rest| rest.strip_suffix(".db"))
+                .is_some_and(|day| NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok())
         })
         .collect();
     names.sort();
@@ -175,11 +226,13 @@ pub fn latest(dir: &Path) -> Option<String> {
 /// if it isn't there yet (cheap when it is). Frequent enough for a laptop opened briefly.
 pub async fn auto_backups(state: Shared, dir: PathBuf, keep: usize) {
     loop {
-        {
-            let conn = state.db.lock().unwrap();
-            if let Ok(Some(day)) = today(&conn)
-                && let Err(e) = daily(&conn, &dir, day, keep)
-            {
+        let day = today(&state.db.lock().unwrap());
+        if let Ok(Some(day)) = day {
+            let (state, target) = (state.clone(), dir.clone());
+            // File work, maybe on a NAS, runs on a blocking thread, not on the async workers.
+            let made =
+                tokio::task::spawn_blocking(move || daily(&state.db, &target, day, keep)).await;
+            if let Ok(Err(e)) = made {
                 eprintln!("Automatische back-up mislukt in {}: {e}", dir.display());
             }
         }
@@ -362,6 +415,68 @@ mod tests {
     }
 
     #[test]
+    fn a_backup_whose_table_text_differs_but_whose_data_is_valid_restores() {
+        // An older release may have written the same tables with different SQL text
+        // (comments, spacing). Only the data has to fit this version's tables.
+        let bytes = tampered(
+            "CREATE TABLE subject2 (id INTEGER PRIMARY KEY,   name TEXT NOT NULL, -- reformatted
+                                    archived INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO subject2 SELECT * FROM subject;
+             DROP TABLE subject;
+             ALTER TABLE subject2 RENAME TO subject;",
+        );
+        let mut conn = db::open_in_memory().unwrap();
+        restore(&mut conn, &bytes).unwrap();
+        let subjects: i64 = conn
+            .query_row("SELECT count(*) FROM subject", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(subjects, 1);
+    }
+
+    #[test]
+    fn a_backup_that_would_lock_the_family_out_is_refused() {
+        for sql in [
+            "UPDATE family SET timezone = 'Mars/Olympus'",
+            "UPDATE family SET pin_hash = 'garbage'",
+        ] {
+            let mut conn = family();
+            assert!(
+                matches!(
+                    restore(&mut conn, &tampered(sql)),
+                    Err(RestoreError::NotABackup)
+                ),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_dated_automatic_backups_are_pruned() {
+        let tmp = scratch().unwrap();
+        let dir = tmp.path();
+        for day in 1..=3 {
+            fs::write(dir.join(format!("wistjet-2026-10-{day:02}.db")), b"x").unwrap();
+        }
+        // A parent's own downloads, and a file that only looks like a backup.
+        fs::write(dir.join("wistjet-back-up-2026-09-01.db"), b"mine").unwrap();
+        fs::write(dir.join("wistjet-notadate12.db"), b"mine").unwrap();
+        prune(dir, 1).unwrap();
+        let mut left: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec![
+                "wistjet-2026-10-03.db",
+                "wistjet-back-up-2026-09-01.db",
+                "wistjet-notadate12.db"
+            ]
+        );
+    }
+
+    #[test]
     fn a_backup_from_a_newer_version_is_refused() {
         let mut conn = family();
         let tmp = scratch().unwrap();
@@ -380,15 +495,15 @@ mod tests {
 
     #[test]
     fn one_automatic_backup_per_day() {
-        let conn = family();
         let tmp = scratch().unwrap();
         let dir = tmp.path();
-        let made = daily(&conn, dir, d("2026-10-19"), 14).unwrap();
+        let db = Mutex::new(family());
+        let made = daily(&db, dir, d("2026-10-19"), 14).unwrap();
         assert_eq!(made, Some(dir.join("wistjet-2026-10-19.db")));
-        assert_eq!(daily(&conn, dir, d("2026-10-19"), 14).unwrap(), None);
+        assert_eq!(daily(&db, dir, d("2026-10-19"), 14).unwrap(), None);
         // The file is a full backup.
         let copy = db::open(&dir.join("wistjet-2026-10-19.db")).unwrap();
-        assert_eq!(dump(&copy), dump(&conn));
+        assert_eq!(dump(&copy), dump(&db.lock().unwrap()));
         assert_eq!(latest(dir).as_deref(), Some("wistjet-2026-10-19.db"));
     }
 

@@ -30,10 +30,11 @@ pub fn routes() -> Router<Shared> {
         .route("/pin", post(change_pin))
         .route("/backup", get(download_backup))
         .route("/backups", get(backup_status))
-        // A backup holds every photo, so allow a large one.
+        // A backup holds every photo (each at most 5 MB), so allow a large one; the upload
+        // is held in memory and written once, which a small NAS must still fit.
         .route(
             "/restore",
-            post(restore).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
+            post(restore).layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
         .route("/decks", get(list_decks).post(create_deck))
         .route("/decks/{id}", put(update_deck))
@@ -282,7 +283,7 @@ async fn download_backup(State(s): State<Shared>) -> Response {
                 (header::CONTENT_TYPE, "application/octet-stream".to_string()),
                 (
                     header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"wistjet-{day}.db\""),
+                    format!("attachment; filename=\"wistjet-back-up-{day}.db\""),
                 ),
             ],
             bytes,
@@ -314,16 +315,28 @@ async fn restore(State(s): State<Shared>, headers: HeaderMap, body: Bytes) -> Re
     if !octets {
         return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "backup_file");
     }
+    // Writing, checking and rebuilding the upload is slow and touches nothing live: no locks.
+    let prepared = match tokio::task::spawn_blocking(move || backup::prepare(&body)).await {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => return restore_failed(e),
+        Err(e) => return internal(e),
+    };
+    // Only the final copy holds the locks, in the usual order (auth, then db).
     let mut auth = s.auth.lock().unwrap();
-    let result = backup::restore(&mut s.db.lock().unwrap(), &body);
-    match result {
+    match backup::apply(&prepared, &mut s.db.lock().unwrap()) {
         Ok(()) => {
             auth.end_all_sessions();
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(RestoreError::NotABackup) => fail(Error::Invalid("backup_file")),
-        Err(RestoreError::TooNew) => fail(Error::Invalid("backup_newer")),
-        Err(RestoreError::Io(e)) => internal(e),
-        Err(RestoreError::Db(e)) => internal(e),
+        Err(e) => restore_failed(e),
+    }
+}
+
+fn restore_failed(e: RestoreError) -> Response {
+    match e {
+        RestoreError::NotABackup => fail(Error::Invalid("backup_file")),
+        RestoreError::TooNew => fail(Error::Invalid("backup_newer")),
+        RestoreError::Io(e) => internal(e),
+        RestoreError::Db(e) => internal(e),
     }
 }
