@@ -630,17 +630,6 @@ In `src/parent_api.rs`, add `use crate::backup::{self, RestoreError};`, add thes
             "/restore",
             post(restore).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
         )
-        .route("/decks", get(list_decks).post(create_deck))
-        .route("/decks/{id}", put(update_deck))
-        .route("/decks/{id}/cards", get(list_cards).post(create_cards))
-        .route("/decks/{id}/progress", get(deck_progress))
-        .route("/decks/{id}/reset", post(reset))
-        .route("/cards/{id}", put(update_card))
-        // Room for a 5 MB image; manage::add_image rejects anything larger with a clear error.
-        .route(
-            "/images",
-            post(add_image).layer(DefaultBodyLimit::max(6 * 1024 * 1024)),
-        )
 ```
 and append these handlers:
 ```rust

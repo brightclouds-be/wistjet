@@ -28,6 +28,7 @@ fn app_and_state() -> (Router, server::Shared) {
         "http://192.168.1.23:8080".into(),
         vec!["wistjet.thuis".into()],
         SETUP_CODE.into(),
+        None,
     );
     (server::router(state.clone()), state)
 }
@@ -1015,4 +1016,114 @@ async fn wrong_current_pins_count_toward_the_lockout() {
     )
     .await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+// ---- backup and restore (Plan 5a) ----
+
+async fn restore_with(app: &Router, cookie: &str, content_type: &str, bytes: Vec<u8>) -> Reply {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/parent/restore")
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(bytes))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    Reply {
+        status: res.status(),
+        cookie: None,
+        content_type: String::new(),
+        body: res.into_body().collect().await.unwrap().to_bytes().to_vec(),
+    }
+}
+
+#[tokio::test]
+async fn backup_routes_need_a_parent_session() {
+    let app = app();
+    set_up(&app).await;
+    for (method, path) in [
+        ("GET", "/api/parent/backup"),
+        ("GET", "/api/parent/backups"),
+        ("POST", "/api/parent/restore"),
+    ] {
+        let r = call(&app, method, path, None, Some(json!({}))).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn download_then_restore_brings_everything_back() {
+    let (app, c) = parent().await;
+    let r = call(&app, "GET", "/api/parent/backup", Some(&c), None).await;
+    assert_eq!(
+        (r.status, r.content_type.as_str()),
+        (StatusCode::OK, "application/octet-stream")
+    );
+    assert!(r.body.starts_with(b"SQLite format 3\0"));
+    let backup = r.body;
+
+    let child = json!({ "name": "Wout", "avatar": "#4fc3f7" });
+    call(&app, "POST", "/api/parent/children", Some(&c), Some(child)).await;
+    let r = call(&app, "GET", "/api/children", None, None).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 2);
+
+    let r = restore_with(&app, &c, "application/octet-stream", backup).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/children", None, None).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 1);
+    // The restored family may have another PIN: everyone unlocks again.
+    let r = call(&app, "GET", "/api/parent/session", Some(&c), None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_download_is_named_after_today() {
+    let (app, c) = parent().await;
+    let req = Request::builder()
+        .uri("/api/parent/backup")
+        .header(header::COOKIE, &c)
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let disposition = res.headers()[header::CONTENT_DISPOSITION]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        disposition.starts_with("attachment; filename=\"wistjet-20"),
+        "{disposition}"
+    );
+    assert!(disposition.ends_with(".db\""), "{disposition}");
+}
+
+#[tokio::test]
+async fn a_bad_restore_is_refused_and_changes_nothing() {
+    let (app, c) = parent().await;
+    let r = restore_with(&app, &c, "text/plain", b"x".to_vec()).await;
+    assert_eq!(r.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    let r = restore_with(
+        &app,
+        &c,
+        "application/octet-stream",
+        b"not a backup".to_vec(),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "invalid", "field": "backup_file" })
+        )
+    );
+    let r = call(&app, "GET", "/api/parent/session", Some(&c), None).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    let r = call(&app, "GET", "/api/children", None, None).await;
+    assert_eq!(r.json().as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn backup_status_without_automatic_backups() {
+    let (app, c) = parent().await;
+    let r = call(&app, "GET", "/api/parent/backups", Some(&c), None).await;
+    assert_eq!(r.json(), json!({ "dir": null, "keep": 0, "latest": null }));
 }

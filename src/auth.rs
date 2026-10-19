@@ -107,6 +107,11 @@ impl Auth {
         self.sessions.remove(token);
     }
 
+    /// Ends every session (after a restore, the PIN may be a different one).
+    pub fn end_all_sessions(&mut self) {
+        self.sessions.clear();
+    }
+
     /// Ends every session but `keep` (after a PIN change, other devices log in again).
     pub fn end_other_sessions(&mut self, keep: &str) {
         self.sessions.retain(|token, _| token == keep);
@@ -231,6 +236,15 @@ mod tests {
         auth.end_other_sessions(&mine);
         assert!(auth.touch(&mine, t0));
         assert!(!auth.touch(&other, t0));
+    }
+
+    #[test]
+    fn a_restore_ends_every_session() {
+        let mut auth = Auth::default();
+        let t0 = Instant::now();
+        let t = token(auth.login(t0, || true));
+        auth.end_all_sessions();
+        assert!(!auth.touch(&t, t0));
     }
 
     #[test]

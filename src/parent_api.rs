@@ -2,6 +2,7 @@
 //! inside the PIN-guarded `/api/parent` router, so every one needs a parent session.
 
 use crate::auth::{Login, verify_pin};
+use crate::backup::{self, RestoreError};
 use crate::family;
 use crate::manage::{self, CardInput, ChildInput, DeckInput, Error, Settings, SubjectInput};
 use crate::server::{Shared, error, internal, session_token, today};
@@ -27,6 +28,13 @@ pub fn routes() -> Router<Shared> {
         .route("/overview", get(overview))
         .route("/settings", get(settings).put(update_settings))
         .route("/pin", post(change_pin))
+        .route("/backup", get(download_backup))
+        .route("/backups", get(backup_status))
+        // A backup holds every photo, so allow a large one.
+        .route(
+            "/restore",
+            post(restore).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
+        )
         .route("/decks", get(list_decks).post(create_deck))
         .route("/decks/{id}", put(update_deck))
         .route("/decks/{id}/cards", get(list_cards).post(create_cards))
@@ -257,5 +265,65 @@ async fn reset(State(s): State<Shared>, Path(id): Path<i64>, Json(b): Json<Reset
         Ok(Some(t)) => done(manage::reset(&conn, id, b.child_id, t).map(|_| ())),
         Ok(None) => error(StatusCode::CONFLICT, "not_set_up"),
         Err(e) => internal(e),
+    }
+}
+
+/// "Download back-up" (spec §9.2): the whole database as one file.
+async fn download_backup(State(s): State<Shared>) -> Response {
+    let conn = s.db.lock().unwrap();
+    let day = match today(&conn) {
+        Ok(Some(t)) => t,
+        Ok(None) => return error(StatusCode::CONFLICT, "not_set_up"),
+        Err(e) => return internal(e),
+    };
+    match backup::backup_bytes(&conn) {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"wistjet-{day}.db\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn backup_status(State(s): State<Shared>) -> Response {
+    let status = match &s.backups {
+        Some(b) => json!({
+            "dir": b.dir.display().to_string(),
+            "keep": b.keep,
+            "latest": backup::latest(&b.dir),
+        }),
+        None => json!({ "dir": null, "keep": 0, "latest": null }),
+    };
+    Json(status).into_response()
+}
+
+/// Replaces all data with an uploaded backup (spec §9.2), then ends every parent session:
+/// the restored family may have another PIN. Only `application/octet-stream` is accepted, so
+/// a plain HTML form elsewhere on this host can't trigger a restore.
+async fn restore(State(s): State<Shared>, headers: HeaderMap, body: Bytes) -> Response {
+    let octets = headers
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|v| v == "application/octet-stream");
+    if !octets {
+        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "backup_file");
+    }
+    let mut auth = s.auth.lock().unwrap();
+    let result = backup::restore(&mut s.db.lock().unwrap(), &body);
+    match result {
+        Ok(()) => {
+            auth.end_all_sessions();
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(RestoreError::NotABackup) => fail(Error::Invalid("backup_file")),
+        Err(RestoreError::TooNew) => fail(Error::Invalid("backup_newer")),
+        Err(RestoreError::Io(e)) => internal(e),
+        Err(RestoreError::Db(e)) => internal(e),
     }
 }

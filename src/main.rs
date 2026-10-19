@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use wistjet::backup::{self, BackupConfig};
 use wistjet::{db, server};
 
 #[derive(Debug, PartialEq)]
@@ -14,6 +15,9 @@ struct Config {
     open_browser: bool,
     /// Extra host names to accept, e.g. a reverse-proxy or ingress name.
     hosts: Vec<String>,
+    /// `None` = a `backups` folder inside the data folder.
+    backup_dir: Option<PathBuf>,
+    backup_keep: usize,
 }
 
 impl Config {
@@ -23,6 +27,14 @@ impl Config {
                 .parse()
                 .map_err(|_| format!("WISTJET_PORT is geen geldige poort: {p}"))?,
             None => 8080,
+        };
+        let backup_keep = match get("WISTJET_BACKUP_KEEP") {
+            Some(n) => n
+                .parse()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or(format!("WISTJET_BACKUP_KEEP is geen geldig aantal: {n}"))?,
+            None => backup::DEFAULT_KEEP,
         };
         Ok(Config {
             data_dir: get("WISTJET_DATA_DIR").map(PathBuf::from),
@@ -35,6 +47,8 @@ impl Config {
                 .filter(|h| !h.is_empty())
                 .map(String::from)
                 .collect(),
+            backup_dir: get("WISTJET_BACKUP_DIR").map(PathBuf::from),
+            backup_keep,
         })
     }
 }
@@ -98,10 +112,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         format!("{local}/#setup={setup_code}")
     };
 
+    let backups = BackupConfig {
+        dir: config
+            .backup_dir
+            .unwrap_or_else(|| data_dir.join("backups")),
+        keep: config.backup_keep,
+    };
+
     println!("Wistjet draait.");
     println!("  Op deze computer:  {local}");
     println!("  Op een tablet:     {lan_url}");
     println!("  Gegevens:          {}", data_dir.display());
+    println!("  Back-ups:          {}", backups.dir.display());
     if !set_up {
         println!("  Instelcode:        {setup_code}");
     }
@@ -109,7 +131,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if config.open_browser {
         let _ = open::that(&start_url);
     }
-    let state = server::AppState::new(conn, lan_url, config.hosts, setup_code);
+    let state = server::AppState::new(
+        conn,
+        lan_url,
+        config.hosts,
+        setup_code,
+        Some(backups.clone()),
+    );
+    tokio::spawn(backup::auto_backups(
+        state.clone(),
+        backups.dir,
+        backups.keep,
+    ));
     let app = server::router(state);
     axum::serve(listener, app).await?;
     Ok(())
@@ -160,7 +193,9 @@ mod tests {
                 data_dir: None,
                 port: 8080,
                 open_browser: true,
-                hosts: vec![]
+                hosts: vec![],
+                backup_dir: None,
+                backup_keep: 14
             })
         );
     }
@@ -173,12 +208,16 @@ mod tests {
                 ("WISTJET_PORT", "9000"),
                 ("WISTJET_OPEN_BROWSER", "0"),
                 ("WISTJET_HOSTS", " wistjet.thuis, ,flashcards.example.org "),
+                ("WISTJET_BACKUP_DIR", "/nas/wistjet"),
+                ("WISTJET_BACKUP_KEEP", "30"),
             ]),
             Ok(Config {
                 data_dir: Some("/data".into()),
                 port: 9000,
                 open_browser: false,
-                hosts: vec!["wistjet.thuis".into(), "flashcards.example.org".into()]
+                hosts: vec!["wistjet.thuis".into(), "flashcards.example.org".into()],
+                backup_dir: Some("/nas/wistjet".into()),
+                backup_keep: 30
             })
         );
     }
@@ -187,6 +226,8 @@ mod tests {
     fn bad_port_is_an_error() {
         assert!(config(&[("WISTJET_PORT", "tachtig")]).is_err());
         assert!(config(&[("WISTJET_PORT", "70000")]).is_err());
+        assert!(config(&[("WISTJET_BACKUP_KEEP", "0")]).is_err());
+        assert!(config(&[("WISTJET_BACKUP_KEEP", "veel")]).is_err());
     }
 
     async fn serve(router: axum::Router) -> u16 {
@@ -206,6 +247,7 @@ mod tests {
             String::new(),
             vec![],
             "123456".into(),
+            None,
         )))
         .await;
         assert!(is_wistjet(port).await);

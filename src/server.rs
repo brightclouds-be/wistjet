@@ -3,6 +3,7 @@
 //! name, which blocks DNS-rebinding attacks from websites a parent visits.
 
 use crate::auth::{self, Auth, Login};
+use crate::backup::BackupConfig;
 use crate::family::{self, Setup, SetupError};
 use crate::store::{self, Answer, AnswerOutcome};
 use crate::{engine, study};
@@ -36,6 +37,8 @@ pub struct AppState {
     /// needed to finish first-run setup, so nobody else on the network can claim the PIN.
     setup_code: String,
     setup_code_failures: AtomicU32,
+    /// Automatic backups (spec §9.2); `None` in tests.
+    pub backups: Option<BackupConfig>,
 }
 
 pub type Shared = Arc<AppState>;
@@ -46,6 +49,7 @@ impl AppState {
         lan_url: String,
         allowed_hosts: Vec<String>,
         setup_code: String,
+        backups: Option<BackupConfig>,
     ) -> Shared {
         Arc::new(AppState {
             db: Mutex::new(db),
@@ -54,6 +58,7 @@ impl AppState {
             allowed_hosts,
             setup_code,
             setup_code_failures: AtomicU32::new(0),
+            backups,
         })
     }
 }
