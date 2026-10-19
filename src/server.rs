@@ -174,11 +174,15 @@ async fn status(State(s): State<Shared>) -> Response {
 /// Takes the next setup-code attempt, or `None` once the cap is reached. Locked
 /// requests don't count, so the counter can never wrap around to zero.
 fn take_attempt(counter: &AtomicU32) -> Option<u32> {
-    counter
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            (n < MAX_SETUP_CODE_FAILURES).then_some(n + 1)
-        })
-        .ok()
+    // A compare-and-swap loop: counts up only while under the cap, even with concurrent callers.
+    let mut n = counter.load(Ordering::SeqCst);
+    while n < MAX_SETUP_CODE_FAILURES {
+        match counter.compare_exchange_weak(n, n + 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Some(n),
+            Err(actual) => n = actual,
+        }
+    }
+    None
 }
 
 #[derive(Deserialize)]
