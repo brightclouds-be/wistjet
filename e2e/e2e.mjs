@@ -70,11 +70,14 @@ chrome = spawn(
   { stdio: 'ignore' },
 )
 let targets = []
-for (let i = 0; i < 50 && !targets.some((t) => t.type === 'page'); i++) {
+// A cold CI runner can take well over 10 s to start Chrome.
+for (let i = 0; i < 150 && !targets.some((t) => t.type === 'page'); i++) {
   await sleep(200)
   targets = await fetch(`http://127.0.0.1:${DEVTOOLS}/json`).then((r) => r.json(), () => [])
 }
-const ws = new WebSocket(targets.find((t) => t.type === 'page').webSocketDebuggerUrl)
+const page = targets.find((t) => t.type === 'page')
+if (!page) throw new Error('Chrome did not open a page within 30 s')
+const ws = new WebSocket(page.webSocketDebuggerUrl)
 await new Promise((r) => ws.addEventListener('open', r))
 let nextId = 0
 const pending = new Map()
