@@ -35,7 +35,8 @@ implementation planning.
 systems; views progress; manages backups.
 
 **Child** — selects their profile, studies due cards, sees a short summary.
-Never sees boxes, intervals, or dates.
+Sees their progress per box, with each box named by how often its cards come back
+("elke dag", "om de 2 weken"); never sees box names, interval settings, or due dates.
 
 ## 4. Concepts
 
@@ -190,6 +191,12 @@ today. A small lock icon opens the parent area.
 - "Start met oefenen" button.
 - When nothing is due: a cheerful "Klaar voor vandaag" message and when the
   next cards come up.
+- "Zo ver ben je": per subject, one bar showing how its cards are spread over
+  the boxes, first box to last, so it fills up green as cards move on. Boxes are
+  labelled by how often their cards come back. Next to the subject: which boxes
+  today's cards come from ("vandaag: elke dag, elke week"). Shown whether or not
+  anything is due. Cards never studied count in the first box. Decks of one
+  subject on different study systems are combined by box position.
 
 ### 6.3 Study
 Before reveal: subject, deck name, front (text and/or image), position
@@ -199,14 +206,16 @@ After reveal: front and back, notes if present, buttons "Wist ik niet" and
 "Wist ik".
 
 Keyboard: space reveals; ← = not known; → = known. Touch-friendly buttons on
-tablets. No boxes, intervals, or dates shown.
+tablets. No boxes, intervals, or dates shown while studying.
 
 If saving an answer fails, show a gentle retry message and keep the card on
 screen. Never drop an answer silently.
 
 ### 6.4 Summary
-Cards known, cards not known, number of practice repeats. "Klaar" returns to
-profile select.
+Cards known, cards not known, number of practice repeats. Below them, the box
+bar (as on the child home) for each subject practised, and "⬆ N kaartjes een
+bakje verder": the cards that went to a later box this session (hidden when
+none did). "Klaar" returns to profile select.
 
 ## 7. Parent area
 

@@ -12,3 +12,11 @@ export function whenNext(date: string, today: Date = new Date()): string {
   if (next.getTime() === tomorrow.getTime()) return 'morgen'
   return `op ${next.toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' })}`
 }
+
+/** A box as a child knows it: how often its cards come back ("elke week"). */
+export function howOften(days: number): string {
+  if (days === 1) return 'elke dag'
+  if (days === 7) return 'elke week'
+  if (days % 7 === 0) return `om de ${days / 7} weken`
+  return `om de ${days} dagen`
+}

@@ -2,6 +2,7 @@
   import { tick } from 'svelte'
   import { api, ApiError } from '../lib/api'
   import { answer, skip, start, type Queue, type Side, type StudyCard } from '../lib/session'
+  import BoxBars, { type SubjectBoxes } from '../components/BoxBars.svelte'
 
   let { childId, subject }: { childId: number; subject: number | null } = $props()
 
@@ -12,6 +13,8 @@
   /** The answer that failed to save; the card stays until it is saved (spec §6.3). */
   let unsaved = $state<boolean | null>(null)
   let stopped = $state(false)
+  /** Cards that went to a later box this session, for the summary. */
+  let movedUp = $state(0)
   let buttons = $state<HTMLDivElement>()
 
   /** Buttons are swapped on every step; put focus on the new first one so keyboard and
@@ -36,19 +39,28 @@
 
   const turn = $derived(queue?.turns[queue.index])
   const finished = $derived(queue !== null && (stopped || turn === undefined))
+  /** Where the practised subjects' cards stand now, fetched once the session ends. */
+  const progress = $derived.by(() => {
+    if (!finished || !queue) return null
+    const practised = new Set(queue.turns.slice(0, queue.index).map((t) => t.card.subject))
+    return api<{ progress: SubjectBoxes[] }>(`children/${childId}/home`).then((h) =>
+      h.progress.filter((s) => practised.has(s.name)),
+    )
+  })
 
   async function respond(known: boolean) {
     if (!queue || !turn || !revealed || saving) return
     if (turn.answerId !== null) {
       saving = true
       try {
-        await api('answers', {
+        const saved = await api<{ moved_up: boolean }>('answers', {
           id: turn.answerId,
           child_id: childId,
           card_id: turn.card.card_id,
           direction: turn.card.direction,
           known,
         })
+        if (saved.moved_up) movedUp += 1
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
           // Archived or unassigned meanwhile: there is nothing left to save, move on.
@@ -111,6 +123,12 @@
         <li class="no"><strong>{s.notKnown}</strong> nog niet</li>
         <li><strong>{s.repeats}</strong> keer herhaald</li>
       </ul>
+      {#await progress then subjects}
+        {#if subjects?.length}<BoxBars {subjects} />{/if}
+      {/await}
+      {#if movedUp > 0}
+        <p class="moved-up">⬆ {movedUp} {movedUp === 1 ? 'kaartje' : 'kaartjes'} een bakje verder</p>
+      {/if}
     {/if}
     <div class="actions"><a class="button big" href="#/">Klaar</a></div>
   </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api'
   import { initial, whenNext } from '../lib/text'
+  import BoxBars, { type SubjectBoxes } from '../components/BoxBars.svelte'
 
   type Home = {
     name: string
@@ -9,6 +10,7 @@
     subjects: { id: number; name: string; due: number }[]
     answered_today: number
     next_due: string | null
+    progress: SubjectBoxes[]
   }
 
   let { childId }: { childId: number } = $props()
@@ -60,6 +62,11 @@
         </li>
       {/each}
     </ul>
+  {/if}
+
+  {#if h.progress.length}
+    <h2>Zo ver ben je</h2>
+    <BoxBars subjects={h.progress} />
   {/if}
 {:catch}
   <div class="card narrow">

@@ -842,3 +842,52 @@ tr.skipped td:last-child {
 code {
   overflow-wrap: anywhere;
 }
+
+.box-bars {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+  text-align: left;
+}
+
+.box-bars h3 {
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+}
+
+.today-boxes {
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.box-bar {
+  display: flex;
+  height: 32px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.box-bar span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+}
+
+.box-legend {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+.moved-up {
+  color: var(--yes);
+  font-weight: 700;
+  font-size: 1.1rem;
+}

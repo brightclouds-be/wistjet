@@ -293,7 +293,8 @@ struct AnswerBody {
 }
 
 /// Saves a scheduling answer (spec §5.3). Repeats and retries are harmless: the server
-/// decides what counts, so every outcome but "not visible" is a plain success.
+/// decides what counts, so every outcome but "not visible" is a plain success, with
+/// whether the card went to a later box (for the summary).
 async fn answer(State(s): State<Shared>, Json(b): Json<AnswerBody>) -> Response {
     if !(1..=64).contains(&b.id.len()) || b.direction > 1 {
         return error(StatusCode::BAD_REQUEST, "invalid");
@@ -313,7 +314,10 @@ async fn answer(State(s): State<Shared>, Json(b): Json<AnswerBody>) -> Response 
     };
     match store::record_answer(&mut conn, &a, Utc::now(), today) {
         Ok(AnswerOutcome::NotFound) => error(StatusCode::NOT_FOUND, "not_found"),
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => match store::moved_up(&conn, &a.id) {
+            Ok(moved_up) => Json(json!({ "moved_up": moved_up })).into_response(),
+            Err(e) => internal(e),
+        },
         Err(e) => internal(e),
     }
 }

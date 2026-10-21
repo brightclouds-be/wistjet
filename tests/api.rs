@@ -372,7 +372,13 @@ async fn child_home_shows_what_is_due() {
             "due": 10,
             "subjects": [{ "id": 1, "name": "Frans", "due": 10 }],
             "answered_today": 0,
-            "next_due": null
+            "next_due": null,
+            "progress": [{ "id": 1, "name": "Frans", "boxes": [
+                { "interval_days": 1, "cards": 10, "due": 10 },
+                { "interval_days": 2, "cards": 0, "due": 0 },
+                { "interval_days": 7, "cards": 0, "due": 0 },
+                { "interval_days": 14, "cards": 0, "due": 0 }
+            ] }]
         })
     );
 }
@@ -430,11 +436,33 @@ async fn answer_counts_once_and_moves_the_home_counts() {
             Some(answer_body("a1", 1)),
         )
         .await;
-        assert_eq!(r.status, StatusCode::NO_CONTENT);
+        // The retry still reports the move the first save made.
+        assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.json(), json!({ "moved_up": true }));
     }
     let r = call(&app, "GET", "/api/children/1/home", None, None).await;
     assert_eq!(r.json()["answered_today"], json!(1));
     assert_eq!(r.json()["due"], json!(9));
+}
+
+#[tokio::test]
+async fn missed_and_practice_answers_do_not_move_up() {
+    let app = app();
+    set_up(&app).await;
+    let mut missed = answer_body("a1", 1);
+    missed["known"] = json!(false);
+    let r = call(&app, "POST", "/api/answers", None, Some(missed)).await;
+    assert_eq!(r.json(), json!({ "moved_up": false }));
+    // Card 1 is no longer due today: a new answer for it is practice.
+    let r = call(
+        &app,
+        "POST",
+        "/api/answers",
+        None,
+        Some(answer_body("a2", 1)),
+    )
+    .await;
+    assert_eq!(r.json(), json!({ "moved_up": false }));
 }
 
 #[tokio::test]
@@ -727,7 +755,7 @@ async fn deck_progress_and_reset() {
         Some(answer_body("a1", 1)),
     )
     .await;
-    assert_eq!(r.status, StatusCode::NO_CONTENT);
+    assert_eq!(r.status, StatusCode::OK);
     let r = call(&app, "GET", "/api/parent/decks/1/progress", Some(&c), None).await;
     assert_eq!(
         r.json(),

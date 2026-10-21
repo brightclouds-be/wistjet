@@ -6,12 +6,30 @@ use chrono::NaiveDate;
 use rand::Rng;
 use rusqlite::{Connection, OptionalExtension, Result, named_params, params};
 use serde::Serialize;
+use std::collections::{HashMap, hash_map::Entry};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct SubjectDue {
     pub id: i64,
     pub name: String,
     pub due: i64,
+}
+
+/// How many of a subject's card directions sit in one box, and how many of those are due.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct BoxCount {
+    /// How often the box's cards come back; the child sees this, not the box name.
+    pub interval_days: i64,
+    pub cards: i64,
+    pub due: i64,
+}
+
+/// A subject's cards spread over the boxes, first box first.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct SubjectBoxes {
+    pub id: i64,
+    pub name: String,
+    pub boxes: Vec<BoxCount>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -25,6 +43,8 @@ pub struct Home {
     pub answered_today: i64,
     /// When nothing is due: the next day something is (`YYYY-MM-DD`).
     pub next_due: Option<String>,
+    /// Every subject with cards, due or not, as the child's progress per box.
+    pub progress: Vec<SubjectBoxes>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -90,6 +110,7 @@ pub fn home(conn: &Connection, child_id: i64, today: NaiveDate) -> Result<Option
     } else {
         None
     };
+    let progress = progress(conn, child_id, today)?;
     Ok(Some(Home {
         name,
         avatar,
@@ -97,7 +118,58 @@ pub fn home(conn: &Connection, child_id: i64, today: NaiveDate) -> Result<Option
         subjects,
         answered_today,
         next_due,
+        progress,
     }))
+}
+
+/// Cards per box for each subject. Decks of one subject on different study systems
+/// are matched by box position; a box takes its interval from the first deck that has it.
+fn progress(conn: &Connection, child_id: i64, today: NaiveDate) -> Result<Vec<SubjectBoxes>> {
+    let sql = format!(
+        "SELECT s.id, s.name, d.system_id, COALESCE(p.box_position, 0), count(*),
+                sum(COALESCE(p.due_date, :today) <= :today)
+         {VISIBLE} GROUP BY 1, 3, 4 ORDER BY s.name, s.id, 3, 4"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(named_params! { ":child": child_id, ":today": today }, |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, usize>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, i64>(5)?,
+        ))
+    })?;
+    let mut subjects: Vec<SubjectBoxes> = vec![];
+    let mut systems = HashMap::new();
+    for row in rows {
+        let (id, name, system_id, pos, cards, due) = row?;
+        if subjects.last().is_none_or(|s| s.id != id) {
+            subjects.push(SubjectBoxes {
+                id,
+                name,
+                boxes: vec![],
+            });
+        }
+        if let Entry::Vacant(e) = systems.entry(system_id) {
+            e.insert(store::load_boxes(conn, system_id)?);
+        }
+        let boxes = &systems[&system_id];
+        let subject = subjects.last_mut().unwrap();
+        for b in &boxes[subject.boxes.len().min(boxes.len())..] {
+            subject.boxes.push(BoxCount {
+                interval_days: i64::from(b.interval_days),
+                cards: 0,
+                due: 0,
+            });
+        }
+        // A stale position past the last box counts as the last box (Plan 1).
+        let slot = &mut subject.boxes[pos.min(boxes.len() - 1)];
+        slot.cards += cards;
+        slot.due += due;
+    }
+    Ok(subjects)
 }
 
 /// The cards for one study session (spec §5.5), in study order.
@@ -231,6 +303,78 @@ mod tests {
         );
         assert_eq!(h.answered_today, 0);
         assert_eq!(h.next_due, None);
+    }
+
+    #[test]
+    fn home_shows_each_subjects_cards_per_box() {
+        let mut conn = fixture();
+        answer(&mut conn, "a1", 1); // le chat: box 1 → box 2
+        // A position past the last box (Plan 1) counts as the last box.
+        conn.execute_batch(
+            "INSERT INTO progress (child_id, card_id, direction, box_position, due_date)
+             VALUES (1, 3, 0, 9, '2026-10-17')",
+        )
+        .unwrap();
+        let h = home(&conn, 1, d(TODAY)).unwrap().unwrap();
+        let boxes = |n: [(i64, i64); 4]| -> Vec<BoxCount> {
+            [1, 2, 7, 14]
+                .iter()
+                .zip(n)
+                .map(|(&interval_days, (cards, due))| BoxCount {
+                    interval_days,
+                    cards,
+                    due,
+                })
+                .collect()
+        };
+        assert_eq!(
+            h.progress,
+            vec![
+                SubjectBoxes {
+                    id: 1,
+                    name: "Frans".into(),
+                    boxes: boxes([(1, 1), (1, 0), (0, 0), (0, 0)])
+                },
+                SubjectBoxes {
+                    id: 2,
+                    name: "Wiskunde".into(),
+                    boxes: boxes([(0, 0), (0, 0), (0, 0), (1, 1)])
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn decks_on_other_systems_join_their_subject_by_box_position() {
+        let conn = fixture();
+        conn.execute_batch(
+            "INSERT INTO study_system (id, name) VALUES (2, 'Drie bakjes');
+             INSERT INTO box VALUES (2, 0, 'A', 3, 1, 0), (2, 1, 'B', 5, 2, 0), (2, 2, 'C', 30, 2, 0);
+             UPDATE deck SET system_id = 2 WHERE id = 2;
+             INSERT INTO deck (id, subject_id, name, system_id, direction_mode)
+               VALUES (3, 2, 'Breuken', 1, 'front_to_back');
+             INSERT INTO deck_child (deck_id, child_id) VALUES (3, 1);
+             INSERT INTO card (id, deck_id, front_text, back_text, notes) VALUES (4, 3, '1/2', '0,5', '');
+             INSERT INTO progress (child_id, card_id, direction, box_position, due_date)
+               VALUES (1, 4, 0, 3, '2026-10-30');",
+        )
+        .unwrap();
+        let h = home(&conn, 1, d(TODAY)).unwrap().unwrap();
+        let maths = &h.progress[1].boxes;
+        let got: Vec<_> = maths.iter().map(|b| (b.interval_days, b.cards)).collect();
+        // School 4-box (system 1) is read first; the 3-box deck's card sits in box 1.
+        assert_eq!(got, vec![(1, 1), (2, 0), (7, 0), (14, 1)]);
+    }
+
+    #[test]
+    fn progress_stays_when_nothing_is_due() {
+        let mut conn = fixture();
+        for card in 1..=3 {
+            answer(&mut conn, &format!("a{card}"), card);
+        }
+        let h = home(&conn, 1, d(TODAY)).unwrap().unwrap();
+        assert_eq!(h.progress.len(), 2);
+        assert_eq!(h.progress[0].boxes[1].cards, 2);
     }
 
     #[test]

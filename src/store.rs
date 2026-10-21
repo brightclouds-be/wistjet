@@ -186,6 +186,16 @@ pub fn record_answer(
     Ok(AnswerOutcome::Scheduled(next))
 }
 
+/// Whether the answer with this id moved its card to a later box. Practice answers are
+/// never logged, so they never moved anything.
+pub fn moved_up(conn: &Connection, answer_id: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM review_log WHERE id = ?1 AND new_box > prev_box)",
+        [answer_id],
+        |r| r.get(0),
+    )
+}
+
 /// Resets a deck to the first box, due today (spec §5.7): one child, or all (`None`).
 /// Only assigned children are touched: an unassigned child's hidden progress is kept (§5.8).
 /// Directions without a progress row are already in that state. The review log is kept.

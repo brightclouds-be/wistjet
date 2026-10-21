@@ -167,6 +167,7 @@ await go(`${BASE}/#/`)
 await js(`document.querySelector('a.tile').click()`)
 await sleep(800)
 check((await text()).includes('3 kaartjes om te oefenen'), 'the child sees 3 cards due')
+check(/Zo ver ben je[\s\S]*vandaag: elke dag/.test(await text()), 'the home screen shows the boxes and today\'s box')
 await shot('child-home')
 await click('Start met oefenen')
 check((await text()).includes('1 van 3'), 'the session starts at 1 van 3')
@@ -178,10 +179,13 @@ for (let i = 0; i < 3; i++) {
   await key(' ')
   await key('ArrowRight')
 }
+await sleep(500) // the summary fetches where the cards stand now
 const summary = (await text()).replace(/\s+/g, ' ')
 check(summary.includes('Goed gedaan!'), 'the summary appears')
 await shot('summary')
 check(/2 wist je 1 nog niet 1 keer herhaald/.test(summary), `the summary counts known, not known and repeats (${summary})`)
+check(summary.includes('om de 2 weken →'), 'the summary shows the box bar')
+check(summary.includes('2 kaartjes een bakje verder'), 'the summary counts the cards that moved up')
 
 console.log('All end-to-end checks passed.')
 stop(0)
