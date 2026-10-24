@@ -670,10 +670,16 @@ pub fn overview(conn: &Connection, today: NaiveDate) -> Result<Vec<ChildOverview
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
             let rushed = conn.query_row(
+                // The gap is to the previous answer of any deck; fast answers on timed decks
+                // are the point of those decks, so only self-judged ones count.
                 "SELECT count(*) FROM (
-                   SELECT known, (julianday(at) - lag(julianday(at)) OVER (ORDER BY julianday(at))) * 86400 AS gap
-                   FROM review_log WHERE child_id = ?1 AND local_date = ?2)
-                 WHERE known AND gap < 2",
+                   SELECT r.known, d.answer_mode,
+                          (julianday(r.at) - lag(julianday(r.at)) OVER (ORDER BY julianday(r.at))) * 86400 AS gap
+                   FROM review_log r
+                   JOIN card c ON c.id = r.card_id
+                   JOIN deck d ON d.id = c.deck_id
+                   WHERE r.child_id = ?1 AND r.local_date = ?2)
+                 WHERE known AND answer_mode = 'self' AND gap < 2",
                 params![child_id, today],
                 |r| r.get(0),
             )?;
@@ -1273,6 +1279,36 @@ mod tests {
             let now = format!("2026-10-18T{at}Z").parse().unwrap();
             record_answer(&mut conn, &a, now, d(TODAY)).unwrap();
         }
+        assert_eq!(overview(&conn, d(TODAY)).unwrap()[0].rushed, 2);
+    }
+
+    #[test]
+    fn fast_answers_on_timed_decks_are_not_rushing() {
+        let mut conn = db::open_in_memory().unwrap();
+        family(&mut conn); // Lotte with the 10-card sample deck (deck 1)
+        conn.execute_batch(
+            "INSERT INTO deck (id, subject_id, name, system_id, direction_mode, answer_mode)
+             VALUES (2, 1, 'Tafels', 1, 'front_to_back', 'timed');
+             INSERT INTO deck_child (deck_id, child_id) VALUES (2, 1);
+             INSERT INTO card (id, deck_id, front_text, back_text, notes) VALUES
+               (101, 2, '1 × 2', '2', ''), (102, 2, '2 × 2', '4', ''), (103, 2, '3 × 2', '6', ''),
+               (104, 2, '4 × 2', '8', ''), (105, 2, '5 × 2', '10', '');",
+        )
+        .unwrap();
+        // One second apart, alternating: sample card, sum, sample card, sum, …
+        let cards = [1, 101, 2, 102, 3, 103, 104, 105];
+        for (i, card_id) in cards.into_iter().enumerate() {
+            let a = Answer {
+                id: format!("a{i}"),
+                child_id: 1,
+                card_id,
+                direction: 0,
+                known: true,
+            };
+            let now = format!("2026-10-18T09:00:{i:02}Z").parse().unwrap();
+            record_answer(&mut conn, &a, now, d(TODAY)).unwrap();
+        }
+        // Only the sample cards 2 and 3 count; card 1 was the first answer of the day.
         assert_eq!(overview(&conn, d(TODAY)).unwrap()[0].rushed, 2);
     }
 

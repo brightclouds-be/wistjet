@@ -65,6 +65,9 @@ pub struct StudyCard {
     pub notes: String,
     /// The deck's study system setting (spec §5.4); the browser repeats missed cards.
     pub repeat_missed: bool,
+    /// The child's time limit on "Typen op tijd" decks; `None` when the child judges
+    /// their own answer (tables spec §7).
+    pub time_limit_ms: Option<i64>,
 }
 
 /// The child home screen (spec §6.2). `None` for an unknown or archived child.
@@ -184,7 +187,9 @@ pub fn session<R: Rng>(
     let items = engine::order_session(store::due_items(conn, child_id, subject_id, today)?, rng);
     let mut stmt = conn.prepare(
         "SELECT s.name, d.name, c.front_text, c.front_image_id, c.back_text, c.back_image_id,
-                c.notes, ss.repeat_missed
+                c.notes, ss.repeat_missed,
+                CASE WHEN d.answer_mode = 'timed'
+                     THEN (SELECT time_limit_ms FROM child WHERE id = ?2) END
          FROM card c
          JOIN deck d ON d.id = c.deck_id
          JOIN subject s ON s.id = d.subject_id
@@ -194,7 +199,7 @@ pub fn session<R: Rng>(
     items
         .iter()
         .map(|item| {
-            stmt.query_row([item.card_id], |r| {
+            stmt.query_row([item.card_id, child_id], |r| {
                 let front = Side {
                     text: r.get(2)?,
                     image: r.get(3)?,
@@ -217,6 +222,7 @@ pub fn session<R: Rng>(
                     answer,
                     notes: r.get(6)?,
                     repeat_missed: r.get(7)?,
+                    time_limit_ms: r.get(8)?,
                 })
             })
         })
@@ -448,9 +454,27 @@ mod tests {
                 },
                 notes: "Denk aan 4 + 4 + 4".into(),
                 repeat_missed: true,
+                time_limit_ms: None,
             }]
         );
         assert_eq!(session_for(&conn, None).len(), 3);
+    }
+
+    #[test]
+    fn timed_decks_send_the_childs_time_limit() {
+        let conn = fixture();
+        conn.execute_batch(
+            "UPDATE deck SET answer_mode = 'timed' WHERE id = 2;
+             UPDATE child SET time_limit_ms = 4500 WHERE id = 1;",
+        )
+        .unwrap();
+        let limits: Vec<_> = session_for(&conn, None)
+            .iter()
+            .map(|c| (c.card_id, c.time_limit_ms))
+            .collect();
+        assert!(limits.contains(&(3, Some(4500))));
+        assert!(limits.contains(&(1, None)));
+        assert!(limits.contains(&(2, None)));
     }
 
     #[test]
