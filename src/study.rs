@@ -188,7 +188,8 @@ pub fn session<R: Rng>(
     let mut stmt = conn.prepare(
         "SELECT s.name, d.name, c.front_text, c.front_image_id, c.back_text, c.back_image_id,
                 c.notes, ss.repeat_missed,
-                CASE WHEN d.answer_mode = 'timed'
+                -- A back without text can't be typed: the child judges that card as usual.
+                CASE WHEN d.answer_mode = 'timed' AND trim(c.back_text) <> ''
                      THEN (SELECT time_limit_ms FROM child WHERE id = ?2) END
          FROM card c
          JOIN deck d ON d.id = c.deck_id
@@ -475,6 +476,18 @@ mod tests {
         assert!(limits.contains(&(3, Some(4500))));
         assert!(limits.contains(&(1, None)));
         assert!(limits.contains(&(2, None)));
+    }
+
+    #[test]
+    fn timed_cards_without_answer_text_are_judged_by_the_child() {
+        let conn = fixture();
+        conn.execute_batch(
+            "UPDATE deck SET answer_mode = 'timed' WHERE id = 2;
+             INSERT INTO image (id, mime, data) VALUES (1, 'image/png', x'89504E47');
+             UPDATE card SET back_text = '  ', back_image_id = 1 WHERE id = 3;",
+        )
+        .unwrap();
+        assert_eq!(session_for(&conn, Some(2))[0].time_limit_ms, None);
     }
 
     #[test]

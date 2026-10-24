@@ -233,6 +233,7 @@ await js(`document.querySelector('a.tile').click()`)
 await sleep(800)
 await js(`[...document.querySelectorAll('a')].find((a) => a.textContent.includes('Wiskunde')).click()`)
 await sleep(800)
+check(await js(`document.activeElement?.matches('.type-answer input')`), 'the first sum has the focus in its answer field')
 let allFast = true
 for (let i = 0; i < 10; i++) {
   const sum = await js(`document.querySelector('.card-text').textContent`)

@@ -23,9 +23,9 @@
           <div><dt>Wist het</dt><dd>{c.known}</dd></div>
           <div><dt>Nog niet</dt><dd>{c.not_known}</dd></div>
         </dl>
-        {#if c.rushed >= 5 && c.rushed * 2 >= c.known}
+        {#if c.rushed >= 5 && c.rushed * 2 >= c.self_known}
           <p class="rushed">
-            ⚠ Vandaag {c.rushed} van de {c.known} keer "Wist ik" binnen 2 seconden. Klikt {c.name} snel door?
+            ⚠ Vandaag {c.rushed} van de {c.self_known} keer "Wist ik" binnen 2 seconden. Klikt {c.name} snel door?
           </p>
         {/if}
         {#if c.boxes.length > 0}

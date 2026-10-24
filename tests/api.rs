@@ -961,7 +961,7 @@ async fn overview_shows_today_per_child() {
         r.json(),
         json!([{
             "child_id": 1, "name": "Lotte", "avatar": "#e57373",
-            "due": 9, "reviewed": 1, "known": 1, "not_known": 0, "rushed": 0, "boxes": [9, 1]
+            "due": 9, "reviewed": 1, "known": 1, "not_known": 0, "rushed": 0, "self_known": 1, "boxes": [9, 1]
         }])
     );
 }

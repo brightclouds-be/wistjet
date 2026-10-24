@@ -621,6 +621,8 @@ pub struct ChildOverview {
     /// "Known" answers today given within 2 seconds of the previous answer: clicking
     /// through without thinking (spec §7.1).
     pub rushed: i64,
+    /// "Known" answers today on self-judged decks: what `rushed` is compared with.
+    pub self_known: i64,
     /// Active card directions per box position, over all decks (spec §7.1).
     pub boxes: Vec<i64>,
 }
@@ -663,11 +665,15 @@ pub fn overview(conn: &Connection, today: NaiveDate) -> Result<Vec<ChildOverview
                 boxes[pos] += count;
                 due += due_here;
             }
-            let (reviewed, known): (i64, i64) = conn.query_row(
-                "SELECT count(*), COALESCE(sum(known), 0) FROM review_log
-                 WHERE child_id = ?1 AND local_date = ?2",
+            let (reviewed, known, self_known): (i64, i64, i64) = conn.query_row(
+                "SELECT count(*), COALESCE(sum(r.known), 0),
+                        COALESCE(sum(r.known AND d.answer_mode = 'self'), 0)
+                 FROM review_log r
+                 JOIN card c ON c.id = r.card_id
+                 JOIN deck d ON d.id = c.deck_id
+                 WHERE r.child_id = ?1 AND r.local_date = ?2",
                 params![child_id, today],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
             let rushed = conn.query_row(
                 // The gap is to the previous answer of any deck; fast answers on timed decks
@@ -692,6 +698,7 @@ pub fn overview(conn: &Connection, today: NaiveDate) -> Result<Vec<ChildOverview
                 known,
                 not_known: reviewed - known,
                 rushed,
+                self_known,
                 boxes,
             })
         })
@@ -1252,6 +1259,7 @@ mod tests {
                 known: 1,
                 not_known: 1,
                 rushed: 0,
+                self_known: 1,
                 boxes: vec![9, 1],
             }]
         );
@@ -1309,7 +1317,10 @@ mod tests {
             record_answer(&mut conn, &a, now, d(TODAY)).unwrap();
         }
         // Only the sample cards 2 and 3 count; card 1 was the first answer of the day.
-        assert_eq!(overview(&conn, d(TODAY)).unwrap()[0].rushed, 2);
+        let o = &overview(&conn, d(TODAY)).unwrap()[0];
+        assert_eq!(o.rushed, 2);
+        // The "at least half" rule compares with self-judged known answers only.
+        assert_eq!((o.known, o.self_known), (8, 3));
     }
 
     #[test]

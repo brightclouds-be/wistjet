@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answer, newId, skip, start, timedVerdict, typedRight, type StudyCard } from './session.ts'
+import { answer, newId, numeric, skip, start, timedVerdict, typedRight, type StudyCard } from './session.ts'
 
 function card(card_id: number, repeat_missed = true): StudyCard {
   const side = { text: `kaart ${card_id}`, image: null }
@@ -130,4 +130,10 @@ test('wrong is not known', () => {
 
 test('a right repeat ends the loop however slow', () => {
   assert.deepEqual(timedVerdict('24', '24', 5100, 3000, true), { known: true, tone: 'yes', message: 'Goed! (5,1 s)' })
+})
+
+test('only number answers get the number keyboard', () => {
+  assert.ok(numeric(' 24 '))
+  assert.ok(!numeric('de kat'))
+  assert.ok(!numeric('2,5'))
 })

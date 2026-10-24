@@ -100,3 +100,6 @@ export function timedVerdict(
   if (ms > limitMs) return { known: false, tone: 'late', message: `Goed, maar nog wat sneller! (${seconds(ms)})` }
   return { known: true, tone: 'yes', message: '✓ Goed!' }
 }
+
+/** Whether an answer is a whole number, so tablets can show the number keyboard. */
+export const numeric = (answer: string) => /^\d+$/.test(answer.trim())

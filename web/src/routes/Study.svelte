@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { api, ApiError } from '../lib/api'
-  import { answer, skip, start, timedVerdict, typedRight, type Queue, type Side, type StudyCard } from '../lib/session'
+  import { answer, numeric, skip, start, timedVerdict, typedRight, type Queue, type Side, type StudyCard } from '../lib/session'
   import BoxBars, { type SubjectBoxes } from '../components/BoxBars.svelte'
 
   let { childId, subject }: { childId: number; subject: number | null } = $props()
@@ -54,7 +54,11 @@
   $effect(() => {
     const query = subject === null ? '' : `?subject=${subject}`
     api<StudyCard[]>(`children/${childId}/session${query}`).then(
-      (cards) => (queue = start(cards)),
+      (cards) => {
+        queue = start(cards)
+        // A timed first sum is on the clock already: its answer field needs the focus.
+        focusButtons()
+      },
       () => (loadFailed = true),
     )
   })
@@ -194,7 +198,7 @@
             Typ je antwoord
             <input
               bind:value={typed}
-              inputmode={timed ? 'numeric' : 'text'}
+              inputmode={timed && numeric(turn.card.answer.text) ? 'numeric' : 'text'}
               autocomplete="off"
               autocapitalize="off"
               spellcheck="false"

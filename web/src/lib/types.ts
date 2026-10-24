@@ -43,6 +43,7 @@ export type ChildOverview = {
   known: number
   not_known: number
   rushed: number
+  self_known: number
   boxes: number[]
 }
 export type Settings = { name: string; timezone: string; default_system_id: number }
