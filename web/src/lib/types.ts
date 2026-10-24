@@ -1,6 +1,6 @@
 /** Shapes of the parent API (see `src/manage.rs`). */
 export type Direction = 'front_to_back' | 'back_to_front' | 'both'
-export type ChildRow = { id: number; name: string; avatar: string; archived: boolean }
+export type ChildRow = { id: number; name: string; avatar: string; archived: boolean; time_limit_ms: number }
 export type SubjectRow = { id: number; name: string; archived: boolean }
 export type BoxRow = { name: string; interval_days: number; success: number; failure: number }
 export type SystemDetail = {
@@ -19,6 +19,7 @@ export type DeckInput = {
   subject_id: number
   system_id: number
   direction_mode: Direction
+  answer_mode: 'self' | 'timed'
   children: number[]
   archived: boolean
 }

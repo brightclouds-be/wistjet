@@ -29,6 +29,8 @@
 
   function submit(e: SubmitEvent) {
     e.preventDefault()
+    // A timed deck asks the sum and wants the result (tables spec §5).
+    if (deck.answer_mode === 'timed') deck.direction_mode = 'front_to_back'
     onsubmit()
   }
 </script>
@@ -48,11 +50,20 @@
     </select>
   </label>
   <fieldset class="choices">
-    <legend>Richting</legend>
-    {#each DIRECTIONS as [value, label] (value)}
-      <label class="choice"><input type="radio" name="direction" {value} bind:group={deck.direction_mode} /> {label}</label>
-    {/each}
+    <legend>Antwoorden</legend>
+    <label class="choice"><input type="radio" name="answer" value="self" bind:group={deck.answer_mode} /> Zelf beoordelen</label>
+    <label class="choice">
+      <input type="radio" name="answer" value="timed" bind:group={deck.answer_mode} /> Typen op tijd (bv. tafels)
+    </label>
   </fieldset>
+  {#if deck.answer_mode === 'self'}
+    <fieldset class="choices">
+      <legend>Richting</legend>
+      {#each DIRECTIONS as [value, label] (value)}
+        <label class="choice"><input type="radio" name="direction" {value} bind:group={deck.direction_mode} /> {label}</label>
+      {/each}
+    </fieldset>
+  {/if}
   <fieldset class="choices">
     <legend>Wie oefent dit deck?</legend>
     {#each childOptions as c (c.id)}

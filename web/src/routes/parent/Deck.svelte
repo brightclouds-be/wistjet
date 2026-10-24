@@ -4,6 +4,7 @@
   import { api } from '../../lib/api'
   import { problem } from '../../lib/messages'
   import { parsePaste, type Pasted } from '../../lib/paste'
+  import { tableLines, type Op } from '../../lib/tables'
   import type { CardInput, CardRow, ChildProgress, ChildRow, DeckInput, DeckRow, SubjectRow, SystemDetail } from '../../lib/types'
 
   let { id }: { id: number } = $props()
@@ -32,6 +33,10 @@
   let editCard = $state(blankCard())
   let pasteText = $state('')
   let preview = $state<(Pasted & { keep: boolean })[] | null>(null)
+  /** Which panel the preview belongs to: a pasted list or generated tables. */
+  let previewOf = $state<'paste' | 'tables'>('paste')
+  let tables = $state<number[]>([])
+  let ops = $state<Op[]>(['×'])
 
   let errors = $state({ cards: '', paste: '', progress: '', settings: '' })
   let saved = $state('')
@@ -52,9 +57,9 @@
     subjects = s
     systems = sy
     children = ch
-    const { name, subject_id, system_id, direction_mode, children: assigned, archived } = deck
+    const { name, subject_id, system_id, direction_mode, answer_mode, children: assigned, archived } = deck
     if (refreshSettings || !settings) {
-      settings = { name, subject_id, system_id, direction_mode, children: [...assigned], archived }
+      settings = { name, subject_id, system_id, direction_mode, answer_mode, children: [...assigned], archived }
     }
     ;[cards, progress] = await Promise.all([
       api<CardRow[]>(`parent/decks/${id}/cards`),
@@ -113,7 +118,17 @@
   }
 
   function showPreview() {
+    previewOf = 'paste'
     preview = parsePaste(pasteText, cards.map((c) => c.front_text)).map((p) => ({ ...p, keep: p.problem === null }))
+  }
+
+  /** Sums already in the deck start unticked, so adding a table twice adds nothing. */
+  function showTables() {
+    previewOf = 'tables'
+    preview = parsePaste(tableLines(tables, ops), cards.map((c) => c.front_text)).map((p) => ({
+      ...p,
+      keep: p.problem === null && !p.duplicate,
+    }))
   }
 
   const toAdd = $derived(preview?.filter((p) => p.problem === null && p.keep) ?? [])
@@ -123,6 +138,7 @@
     if (await run('paste', () => api(`parent/decks/${id}/cards`, batch))) {
       saved = `${batch.length} kaartjes toegevoegd.`
       pasteText = ''
+      tables = []
       preview = null
     }
   }
@@ -190,6 +206,27 @@
     {#if errors.cards}<p class="error" role="alert">{errors.cards}</p>{/if}
   </section>
 
+  {#if deck.answer_mode === 'timed'}
+    <section class="card">
+      <h3>Tafels toevoegen</h3>
+      <fieldset class="choices">
+        <legend>Tafels van</legend>
+        {#each [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as n (n)}
+          <label class="choice"><input type="checkbox" value={n} bind:group={tables} /> {n}</label>
+        {/each}
+      </fieldset>
+      <fieldset class="choices">
+        <legend>Soort</legend>
+        <label class="choice"><input type="checkbox" value="×" bind:group={ops} /> × maaltafels</label>
+        <label class="choice"><input type="checkbox" value=":" bind:group={ops} /> : deeltafels</label>
+      </fieldset>
+      <div class="actions">
+        <button class="secondary" onclick={showTables} disabled={tables.length === 0 || ops.length === 0}>Bekijk</button>
+      </div>
+      {#if previewOf === 'tables'}{@render previewTable()}{/if}
+    </section>
+  {/if}
+
   <section class="card">
     <h3>Lijst plakken</h3>
     <p class="muted">
@@ -198,6 +235,10 @@
     </p>
     <textarea bind:value={pasteText} rows="6" aria-label="Geplakte lijst" placeholder={'le chat - de kat\nle chien - de hond'}></textarea>
     <div class="actions"><button class="secondary" onclick={showPreview} disabled={!pasteText.trim()}>Bekijk</button></div>
+    {#if previewOf === 'paste'}{@render previewTable()}{/if}
+  </section>
+
+  {#snippet previewTable()}
     {#if preview}
       <table class="preview">
         <thead><tr><th></th><th>Voorkant</th><th>Achterkant</th><th></th></tr></thead>
@@ -223,7 +264,7 @@
       </div>
     {/if}
     {#if errors.paste}<p class="error" role="alert">{errors.paste}</p>{/if}
-  </section>
+  {/snippet}
 
   <section class="card">
     <h3>Voortgang</h3>

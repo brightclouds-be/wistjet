@@ -45,15 +45,20 @@ Exactly one per installation. Fields: name, timezone, parent PIN (stored
 hashed), default study system for new decks.
 
 ### Child
-Display name, avatar or colour, active/archived. No other personal data.
+Display name, avatar or colour, active/archived, time limit for "Typen op
+tijd" decks (default 3 seconds; see the tables spec). No other personal data.
 Archived children are hidden from the profile screen; their progress is kept.
 
 ### Subject
 Name, active/archived. Groups decks (e.g. Frans, Wiskunde, WO).
 
 ### Deck
-Name, subject, study system, direction mode, assigned children,
+Name, subject, study system, direction mode, answer mode, assigned children,
 active/archived.
+
+Answer mode is "Zelf beoordelen" (default: the child reveals and judges) or
+"Typen op tijd" (every card typed and timed, front → back only; see
+`2026-10-24-tables-design.md`).
 
 Direction mode is one of:
 - front → back
@@ -238,18 +243,21 @@ at least 5 "known" answers today came within 2 seconds of the previous answer,
 and they make up at least half of today's "known" answers.
 
 ### 7.2 Children
-Create, rename, set avatar/colour, archive, restore.
+Create, rename, set avatar/colour, set the time limit per sum, archive,
+restore.
 
 ### 7.3 Subjects
 Create, rename, archive, restore.
 
 ### 7.4 Decks
-- Create/edit: name, subject, study system, direction mode, assigned
-  children.
+- Create/edit: name, subject, study system, answer mode, direction mode
+  (not for "Typen op tijd"), assigned children.
 - Archive/restore.
 - Deck page:
   - card list with add, edit, inactivate/reactivate, image upload per side;
   - **Paste a list** (see 7.5);
+  - on "Typen op tijd" decks, **Tafels toevoegen**: generated table sums go
+    through the same preview, with sums already in the deck unticked;
   - box distribution per assigned child, and due count;
   - reset progress (5.7).
 

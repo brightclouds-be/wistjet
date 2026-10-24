@@ -25,6 +25,7 @@
           subject_id: subject.id,
           system_id: (systems.find((s) => s.is_default) ?? systems[0])?.id ?? 1,
           direction_mode: 'front_to_back',
+          answer_mode: 'self',
           children: children.filter((c) => !c.archived).map((c) => c.id),
           archived: false,
         }

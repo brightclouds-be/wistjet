@@ -6,6 +6,8 @@ const FIELD: Record<string, string> = {
   subject_id: 'Kies een vak.',
   system_id: 'Kies een studiesysteem.',
   direction_mode: 'Kies een richting.',
+  answer_mode: 'Kies hoe er geantwoord wordt.',
+  time_limit_ms: 'Kies een tijd van 1 tot 30 seconden, per halve seconde.',
   children: 'Een van de gekozen kinderen bestaat niet meer.',
   front: 'De voorkant heeft tekst (hoogstens 500 tekens) of een afbeelding nodig.',
   back: 'De achterkant heeft tekst (hoogstens 500 tekens) of een afbeelding nodig.',
