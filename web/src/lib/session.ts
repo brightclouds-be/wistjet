@@ -11,6 +11,8 @@ export type StudyCard = {
   answer: Side
   notes: string
   repeat_missed: boolean
+  /** Set on "Typen op tijd" decks: every showing is typed and timed (tables spec §7). */
+  time_limit_ms: number | null
 }
 
 /** One showing of a card. First showings carry the id the server records the answer
@@ -36,7 +38,7 @@ export function start(cards: StudyCard[], id: () => string = newId, roll = Math.
   return {
     turns: cards.map((card) => {
       const text = card.answer.text.trim()
-      const check = roll() < 0.2 && text !== '' && text.length <= TYPEABLE
+      const check = roll() < 0.2 && text !== '' && text.length <= TYPEABLE && card.time_limit_ms === null
       return { card, answerId: id(), check }
     }),
     index: 0,
@@ -80,4 +82,21 @@ const plain = (s: string) =>
 export function typedRight(typed: string, answer: string): boolean {
   const t = plain(typed)
   return t !== '' && [answer, ...answer.split(/[,;/]/)].some((a) => plain(a) === t)
+}
+
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1).replace('.', ',')} s`
+
+/** The result of a timed answer (tables spec §7). Speed only counts for the scheduling
+ *  answer: a practice repeat that is right ends the repeat loop however long it took. */
+export function timedVerdict(
+  typed: string,
+  answer: string,
+  ms: number,
+  limitMs: number,
+  practice: boolean,
+): { known: boolean; tone: 'yes' | 'late' | 'no'; message: string } {
+  if (!typedRight(typed, answer)) return { known: false, tone: 'no', message: `Het is ${answer}` }
+  if (practice) return { known: true, tone: 'yes', message: `Goed! (${seconds(ms)})` }
+  if (ms > limitMs) return { known: false, tone: 'late', message: `Goed, maar nog wat sneller! (${seconds(ms)})` }
+  return { known: true, tone: 'yes', message: '✓ Goed!' }
 }

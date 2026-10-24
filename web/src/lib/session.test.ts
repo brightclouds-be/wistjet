@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answer, newId, skip, start, typedRight, type StudyCard } from './session.ts'
+import { answer, newId, skip, start, timedVerdict, typedRight, type StudyCard } from './session.ts'
 
 function card(card_id: number, repeat_missed = true): StudyCard {
   const side = { text: `kaart ${card_id}`, image: null }
-  return { card_id, direction: 0, subject: 'Frans', deck: 'H1', question: side, answer: side, notes: '', repeat_missed }
+  return { card_id, direction: 0, subject: 'Frans', deck: 'H1', question: side, answer: side, notes: '', repeat_missed, time_limit_ms: null }
 }
 
 let n = 0
@@ -105,4 +105,29 @@ test('a typed answer may be any one of the listed answers', () => {
   assert.ok(!typedRight('hond', 'de hond, het hondje'))
   assert.ok(typedRight('het hondje', 'de hond / het hondje'))
   assert.ok(typedRight('de hond, het hondje', 'de hond, het hondje'))
+})
+
+test('timed cards are never picked for the typed check', () => {
+  const q = start([{ ...card(1), time_limit_ms: 3000 }], ids, () => 0)
+  assert.equal(q.turns[0].check, false)
+})
+
+test('right within the limit is known', () => {
+  assert.deepEqual(timedVerdict(' 24 ', '24', 2900, 3000, false), { known: true, tone: 'yes', message: '✓ Goed!' })
+})
+
+test('right but slow is not known', () => {
+  assert.deepEqual(timedVerdict('24', '24', 4200, 3000, false), {
+    known: false,
+    tone: 'late',
+    message: 'Goed, maar nog wat sneller! (4,2 s)',
+  })
+})
+
+test('wrong is not known', () => {
+  assert.deepEqual(timedVerdict('25', '24', 1000, 3000, false), { known: false, tone: 'no', message: 'Het is 24' })
+})
+
+test('a right repeat ends the loop however slow', () => {
+  assert.deepEqual(timedVerdict('24', '24', 5100, 3000, true), { known: true, tone: 'yes', message: 'Goed! (5,1 s)' })
 })
