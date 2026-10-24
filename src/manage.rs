@@ -50,6 +50,8 @@ pub struct ChildRow {
     pub name: String,
     pub avatar: String,
     pub archived: bool,
+    /// Time allowed per answer on "Typen op tijd" decks (tables spec §5).
+    pub time_limit_ms: i64,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +60,12 @@ pub struct ChildInput {
     pub avatar: String,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default = "default_time_limit")]
+    pub time_limit_ms: i64,
+}
+
+fn default_time_limit() -> i64 {
+    3000
 }
 
 fn check_child(c: &ChildInput) -> Result<String> {
@@ -65,18 +73,23 @@ fn check_child(c: &ChildInput) -> Result<String> {
     if !valid_avatar(&c.avatar) {
         return Err(Error::Invalid("avatar"));
     }
+    if !(1000..=30000).contains(&c.time_limit_ms) || c.time_limit_ms % 500 != 0 {
+        return Err(Error::Invalid("time_limit_ms"));
+    }
     Ok(name)
 }
 
 /// All children, archived ones too, in the order they were added.
 pub fn list_children(conn: &Connection) -> Result<Vec<ChildRow>> {
-    let mut stmt = conn.prepare("SELECT id, name, avatar, archived FROM child ORDER BY id")?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, avatar, archived, time_limit_ms FROM child ORDER BY id")?;
     let rows = stmt.query_map([], |r| {
         Ok(ChildRow {
             id: r.get(0)?,
             name: r.get(1)?,
             avatar: r.get(2)?,
             archived: r.get(3)?,
+            time_limit_ms: r.get(4)?,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -85,8 +98,8 @@ pub fn list_children(conn: &Connection) -> Result<Vec<ChildRow>> {
 pub fn create_child(conn: &Connection, c: &ChildInput) -> Result<i64> {
     let name = check_child(c)?;
     conn.execute(
-        "INSERT INTO child (name, avatar, archived) VALUES (?1, ?2, ?3)",
-        params![name, c.avatar, c.archived],
+        "INSERT INTO child (name, avatar, archived, time_limit_ms) VALUES (?1, ?2, ?3, ?4)",
+        params![name, c.avatar, c.archived, c.time_limit_ms],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -95,8 +108,8 @@ pub fn create_child(conn: &Connection, c: &ChildInput) -> Result<i64> {
 pub fn update_child(conn: &Connection, id: i64, c: &ChildInput) -> Result<()> {
     let name = check_child(c)?;
     found(conn.execute(
-        "UPDATE child SET name = ?2, avatar = ?3, archived = ?4 WHERE id = ?1",
-        params![id, name, c.avatar, c.archived],
+        "UPDATE child SET name = ?2, avatar = ?3, archived = ?4, time_limit_ms = ?5 WHERE id = ?1",
+        params![id, name, c.avatar, c.archived, c.time_limit_ms],
     )?)
 }
 
@@ -154,6 +167,7 @@ pub struct DeckRow {
     pub subject_id: i64,
     pub system_id: i64,
     pub direction_mode: String,
+    pub answer_mode: String,
     pub archived: bool,
     pub children: Vec<i64>,
     /// Active cards.
@@ -166,9 +180,15 @@ pub struct DeckInput {
     pub subject_id: i64,
     pub system_id: i64,
     pub direction_mode: String,
+    #[serde(default = "default_answer_mode")]
+    pub answer_mode: String,
     pub children: Vec<i64>,
     #[serde(default)]
     pub archived: bool,
+}
+
+fn default_answer_mode() -> String {
+    "self".into()
 }
 
 fn check_deck(conn: &Connection, d: &DeckInput) -> Result<String> {
@@ -188,6 +208,13 @@ fn check_deck(conn: &Connection, d: &DeckInput) -> Result<String> {
         return Err(Error::Invalid("system_id"));
     }
     if !["front_to_back", "back_to_front", "both"].contains(&d.direction_mode.as_str()) {
+        return Err(Error::Invalid("direction_mode"));
+    }
+    if !["self", "timed"].contains(&d.answer_mode.as_str()) {
+        return Err(Error::Invalid("answer_mode"));
+    }
+    // A timed deck asks the sum and wants the result, never the other way round.
+    if d.answer_mode == "timed" && d.direction_mode != "front_to_back" {
         return Err(Error::Invalid("direction_mode"));
     }
     for &child in &d.children {
@@ -217,7 +244,8 @@ fn set_children(conn: &Connection, deck_id: i64, children: &[i64]) -> Result<()>
 pub fn list_decks(conn: &Connection) -> Result<Vec<DeckRow>> {
     let mut stmt = conn.prepare(
         "SELECT d.id, d.name, d.subject_id, d.system_id, d.direction_mode, d.archived,
-                (SELECT count(*) FROM card c WHERE c.deck_id = d.id AND c.active = 1)
+                (SELECT count(*) FROM card c WHERE c.deck_id = d.id AND c.active = 1),
+                d.answer_mode
          FROM deck d ORDER BY d.name",
     )?;
     let mut children =
@@ -230,6 +258,7 @@ pub fn list_decks(conn: &Connection) -> Result<Vec<DeckRow>> {
                 subject_id: r.get(2)?,
                 system_id: r.get(3)?,
                 direction_mode: r.get(4)?,
+                answer_mode: r.get(7)?,
                 archived: r.get(5)?,
                 children: vec![],
                 cards: r.get(6)?,
@@ -251,14 +280,15 @@ pub fn create_deck(conn: &mut Connection, d: &DeckInput) -> Result<i64> {
     let name = check_deck(conn, d)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
-        "INSERT INTO deck (name, subject_id, system_id, direction_mode, archived)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO deck (name, subject_id, system_id, direction_mode, archived, answer_mode)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             name,
             d.subject_id,
             d.system_id,
             d.direction_mode,
-            d.archived
+            d.archived,
+            d.answer_mode
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -282,7 +312,7 @@ pub fn update_deck(conn: &mut Connection, id: i64, d: &DeckInput) -> Result<()> 
     };
     tx.execute(
         "UPDATE deck SET name = ?2, subject_id = ?3, system_id = ?4, direction_mode = ?5,
-                         archived = ?6
+                         archived = ?6, answer_mode = ?7
          WHERE id = ?1",
         params![
             id,
@@ -290,7 +320,8 @@ pub fn update_deck(conn: &mut Connection, id: i64, d: &DeckInput) -> Result<()> 
             d.subject_id,
             d.system_id,
             d.direction_mode,
-            d.archived
+            d.archived,
+            d.answer_mode
         ],
     )?;
     if old_system != d.system_id {
@@ -732,6 +763,7 @@ mod tests {
             name: name.into(),
             avatar: "#e57373".into(),
             archived: false,
+            time_limit_ms: 3000,
         }
     }
 
@@ -741,6 +773,7 @@ mod tests {
             subject_id: 1,
             system_id: 1,
             direction_mode: "front_to_back".into(),
+            answer_mode: "self".into(),
             children,
             archived: false,
         }
@@ -809,6 +842,7 @@ mod tests {
                 name: " Wouter ".into(),
                 avatar: "#4fc3f7".into(),
                 archived: true,
+                time_limit_ms: 3000,
             },
         )
         .unwrap();
@@ -818,7 +852,8 @@ mod tests {
                 id: 2,
                 name: "Wouter".into(),
                 avatar: "#4fc3f7".into(),
-                archived: true
+                archived: true,
+                time_limit_ms: 3000,
             }
         );
         assert_eq!(invalid(create_child(&conn, &child(" "))), "name");
@@ -892,12 +927,18 @@ mod tests {
     fn deck_input_is_checked() {
         let mut conn = fixture();
         type Break = fn(&mut DeckInput);
-        let cases: [(&str, Break); 5] = [
+        let cases: [(&str, Break); 7] = [
             ("name", |d| d.name = "".into()),
             ("subject_id", |d| d.subject_id = 9),
             ("system_id", |d| d.system_id = 9),
             ("direction_mode", |d| d.direction_mode = "sideways".into()),
             ("children", |d| d.children = vec![9]),
+            ("answer_mode", |d| d.answer_mode = "fast".into()),
+            // Timed decks only study front to back (tables spec §5).
+            ("direction_mode", |d| {
+                d.answer_mode = "timed".into();
+                d.direction_mode = "both".into();
+            }),
         ];
         for (field, break_it) in cases {
             let mut input = deck(vec![1]);
@@ -908,6 +949,41 @@ mod tests {
             update_deck(&mut conn, 99, &deck(vec![])),
             Err(Error::NotFound)
         ));
+    }
+
+    #[test]
+    fn timed_decks_only_study_front_to_back() {
+        let mut conn = fixture();
+        let mut input = deck(vec![1]);
+        input.answer_mode = "timed".into();
+        update_deck(&mut conn, 1, &input).unwrap();
+        assert_eq!(list_decks(&conn).unwrap()[0].answer_mode, "timed");
+        input.direction_mode = "both".into();
+        assert_eq!(invalid(update_deck(&mut conn, 1, &input)), "direction_mode");
+    }
+
+    #[test]
+    fn children_get_a_time_limit_of_3_seconds_unless_set() {
+        let conn = fixture();
+        assert_eq!(list_children(&conn).unwrap()[0].time_limit_ms, 3000);
+        let slower = ChildInput {
+            time_limit_ms: 4500,
+            ..child("Lotte")
+        };
+        update_child(&conn, 1, &slower).unwrap();
+        assert_eq!(list_children(&conn).unwrap()[0].time_limit_ms, 4500);
+    }
+
+    #[test]
+    fn time_limits_outside_1_to_30_seconds_or_off_the_half_second_are_refused() {
+        let conn = fixture();
+        for ms in [0, 500, 30500, 3200] {
+            let c = ChildInput {
+                time_limit_ms: ms,
+                ..child("X")
+            };
+            assert_eq!(invalid(create_child(&conn, &c)), "time_limit_ms", "{ms}");
+        }
     }
 
     #[test]

@@ -3,7 +3,10 @@
 use rusqlite::Connection;
 use std::path::Path;
 
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/001_init.sql"),
+    include_str!("../migrations/002_tables.sql"),
+];
 const APPLICATION_ID: i64 = 1464423252; // "WIST", set by migration 001
 
 #[derive(Debug)]
@@ -80,6 +83,31 @@ mod tests {
             .query_row("SELECT count(*) FROM study_system", [], |r| r.get(0))
             .unwrap();
         assert_eq!(systems, 1);
+    }
+
+    #[test]
+    fn version_1_files_migrate_to_self_decks_and_3_second_children() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute_batch(MIGRATIONS[0]).unwrap();
+        tx.execute_batch(
+            "PRAGMA user_version = 1;
+             INSERT INTO child (name, avatar) VALUES ('Lotte', '#e57373');
+             INSERT INTO subject (name) VALUES ('Frans');
+             INSERT INTO deck (subject_id, name, system_id, direction_mode)
+             VALUES (1, 'H1', 1, 'both');",
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let conn = prepare(conn).unwrap();
+        let row: (String, i64) = conn
+            .query_row(
+                "SELECT d.answer_mode, c.time_limit_ms FROM deck d, child c",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("self".into(), 3000));
     }
 
     #[test]

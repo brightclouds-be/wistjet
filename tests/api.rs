@@ -583,7 +583,7 @@ async fn parent_adds_renames_and_archives_a_child() {
     let r = call(&app, "GET", "/api/parent/children", Some(&c), None).await;
     assert_eq!(
         r.json()[1],
-        json!({ "id": 2, "name": "Wouter", "avatar": "#4fc3f7", "archived": true })
+        json!({ "id": 2, "name": "Wouter", "avatar": "#4fc3f7", "archived": true, "time_limit_ms": 3000 })
     );
     // Archived children are gone from the profile screen.
     let r = call(&app, "GET", "/api/children", None, None).await;
@@ -617,6 +617,26 @@ async fn invalid_content_names_the_field() {
     )
     .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn time_limit_is_checked() {
+    let (app, c) = parent().await;
+    let r = call(
+        &app,
+        "POST",
+        "/api/parent/children",
+        Some(&c),
+        Some(json!({ "name": "Wout", "avatar": "#4fc3f7", "time_limit_ms": 3200 })),
+    )
+    .await;
+    assert_eq!(
+        (r.status, r.json()),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "invalid", "field": "time_limit_ms" })
+        )
+    );
 }
 
 #[tokio::test]
@@ -671,6 +691,7 @@ async fn parent_builds_a_deck_with_cards() {
         (tafels["cards"].clone(), tafels["children"].clone()),
         (json!(1), json!([1]))
     );
+    assert_eq!(tafels["answer_mode"], json!("self"));
     // Both directions of the one active card are now due for Lotte, next to the 10 sample cards.
     let r = call(&app, "GET", "/api/children/1/home", None, None).await;
     assert_eq!(r.json()["due"], json!(12));
