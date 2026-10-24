@@ -463,6 +463,10 @@ h2 {
   color: var(--no);
 }
 
+.typed.late {
+  color: var(--accent);
+}
+
 .summary {
   text-align: center;
 }

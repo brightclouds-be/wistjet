@@ -198,5 +198,51 @@ check(/2 wist je 1 nog niet 1 keer herhaald/.test(summary), `the summary counts 
 check(summary.includes('om de 2 weken →'), 'the summary shows the box bar')
 check(summary.includes('2 kaartjes een bakje verder'), 'the summary counts the cards that moved up')
 
+
+// ---- tables: a timed deck, typed against the clock ----
+await click('Klaar')
+await click('🔒')
+await type('input[type=password]', '2468')
+await click('Ontgrendel')
+await go(`${BASE}/#/ouder/vakken`)
+await type('section.card input', 'Wiskunde')
+await click('Toevoegen')
+await go(`${BASE}/#/ouder/decks`)
+await type('section.card input', 'Tafels')
+await js(`(() => {
+  const s = document.querySelector('section.card select')
+  s.value = [...s.options].find((o) => o.text === 'Wiskunde').value
+  s.dispatchEvent(new Event('change'))
+  document.querySelector('input[name=answer][value=timed]').click()
+})()`)
+await click('Toevoegen')
+check((await text()).includes('Tafels toevoegen'), 'a timed deck offers to add tables')
+const tickTable = (n) =>
+  js(`[...document.querySelectorAll('section.card')].find((s) => s.querySelector('h3')?.textContent === 'Tafels toevoegen').querySelector('input[value="${n}"]').click()`)
+await tickTable(1)
+await click('Bekijk')
+await click('Voeg 10 kaartjes toe')
+check((await text()).includes('Kaartjes (10)'), 'the table of 1 adds 10 sums')
+await tickTable(1)
+await click('Bekijk')
+check((await text()).includes('Voeg 0 kaartjes toe'), 'adding the same table again adds nothing')
+await click('Vergrendel')
+
+await go(`${BASE}/#/`)
+await js(`document.querySelector('a.tile').click()`)
+await sleep(800)
+await js(`[...document.querySelectorAll('a')].find((a) => a.textContent.includes('Wiskunde')).click()`)
+await sleep(800)
+let allFast = true
+for (let i = 0; i < 10; i++) {
+  const sum = await js(`document.querySelector('.card-text').textContent`)
+  await type('.type-answer input', sum.split(' × ')[0])
+  await click('Controleer')
+  allFast &&= (await text()).includes('✓ Goed!')
+  await click('Verder')
+}
+check(allFast, 'every sum typed right in time is "Goed!"')
+check((await text()).replace(/\s+/g, ' ').includes('10 wist je'), 'the summary counts the 10 sums as known')
+
 console.log('All end-to-end checks passed.')
 stop(0)

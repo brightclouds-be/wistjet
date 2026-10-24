@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { api, ApiError } from '../lib/api'
-  import { answer, skip, start, typedRight, type Queue, type Side, type StudyCard } from '../lib/session'
+  import { answer, skip, start, timedVerdict, typedRight, type Queue, type Side, type StudyCard } from '../lib/session'
   import BoxBars, { type SubjectBoxes } from '../components/BoxBars.svelte'
 
   let { childId, subject }: { childId: number; subject: number | null } = $props()
@@ -18,6 +18,9 @@
   /** On a check turn: what the child typed, and whether it was right once checked. */
   let typed = $state('')
   let typedOk = $state<boolean | null>(null)
+  /** On a timed turn (tables spec §7): the result once submitted, and when the sum appeared. */
+  let verdict = $state<ReturnType<typeof timedVerdict> | null>(null)
+  let shownAt = 0
   let buttons = $state<HTMLDivElement>()
 
   /** Buttons are swapped on every step; put focus on the new first one so keyboard and
@@ -35,7 +38,9 @@
   function check(e: SubmitEvent) {
     e.preventDefault()
     if (!turn) return
-    typedOk = typedRight(typed, turn.card.answer.text)
+    const limit = turn.card.time_limit_ms
+    if (limit === null) typedOk = typedRight(typed, turn.card.answer.text)
+    else verdict = timedVerdict(typed, turn.card.answer.text, performance.now() - shownAt, limit, turn.answerId === null)
     reveal()
   }
 
@@ -43,6 +48,7 @@
     revealed = false
     typed = ''
     typedOk = null
+    verdict = null
   }
 
   $effect(() => {
@@ -54,6 +60,11 @@
   })
 
   const turn = $derived(queue?.turns[queue.index])
+  const timed = $derived(turn != null && turn.card.time_limit_ms !== null)
+  // The clock runs from the moment a sum is on screen; it is never shown.
+  $effect(() => {
+    if (turn) shownAt = performance.now()
+  })
   const finished = $derived(queue !== null && (stopped || turn === undefined))
   /** Where the practised subjects' cards stand now, fetched once the session ends. */
   const progress = $derived.by(() => {
@@ -102,7 +113,7 @@
     // Alt/Cmd/Ctrl+arrow is browser navigation, never an answer.
     if (finished || !turn || e.altKey || e.metaKey || e.ctrlKey) return
     // Typing the answer, or a typed answer that decides for itself: no shortcuts.
-    if (turn.check) return
+    if (turn.check || turn.card.time_limit_ms !== null) return
     if (e.key === ' ') {
       // Never let space also "click" a focused answer button.
       e.preventDefault()
@@ -160,7 +171,9 @@
     <section class="flashcard" aria-live="polite">
       {@render side(turn.card.question)}
       {#if revealed}
-        {#if typedOk === true}
+        {#if verdict}
+          <p class="typed {verdict.tone}">{verdict.message}</p>
+        {:else if typedOk === true}
           <p class="typed yes">✓ Goed getypt!</p>
         {:else if typedOk === false}
           <p class="typed no">Je typte: <strong>{typed.trim() || '(niets)'}</strong></p>
@@ -175,16 +188,26 @@
       {#if unsaved !== null}
         <p class="error" role="alert">Dat lukte even niet. Probeer het nog eens.</p>
         <button disabled={saving} onclick={() => respond(unsaved!)}>Opnieuw proberen</button>
-      {:else if turn.check && !revealed}
+      {:else if (turn.check || timed) && !revealed}
         <form class="type-answer" onsubmit={check}>
           <label>
             Typ je antwoord
-            <input bind:value={typed} autocomplete="off" autocapitalize="off" spellcheck="false" />
+            <input
+              bind:value={typed}
+              inputmode={timed ? 'numeric' : 'text'}
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+            />
           </label>
           <button>Controleer</button>
         </form>
       {:else if !revealed}
         <button class="reveal" onclick={reveal}>Toon antwoord</button>
+      {:else if verdict}
+        <button class={verdict.known ? 'yes' : 'no'} disabled={saving} onclick={() => respond(verdict!.known)}>
+          Verder
+        </button>
       {:else if typedOk !== null}
         <button class={typedOk ? 'yes' : 'no'} disabled={saving} onclick={() => respond(typedOk!)}>
           Verder

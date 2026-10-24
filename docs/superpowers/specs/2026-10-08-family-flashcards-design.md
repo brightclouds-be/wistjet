@@ -216,7 +216,9 @@ Typed check: on about one in five first showings whose back is a short text
 of the answers it lists (separated by "," ";" or "/"), ignoring case, accents,
 punctuation and spacing. The back is then shown with "Goed getypt!" or what was
 typed, and a single "Verder" button records the result; the child cannot
-override it. Practice repeats are never checked. This makes clicking "Wist ik"
+override it. Practice repeats are never checked, and neither are
+"Typen op tijd" decks: there every card is typed and timed (see
+`2026-10-24-tables-design.md` §7). This makes clicking "Wist ik"
 without knowing a gamble.
 
 Keyboard: space reveals; ← = not known; → = known (not on typed checks).
@@ -240,7 +242,8 @@ Entered via PIN. Locks after 10 minutes of inactivity or via an explicit
 Per child: due today, reviewed today, known/not known today, number of active
 card directions per box. A warning when the child seems to click through:
 at least 5 "known" answers today came within 2 seconds of the previous answer,
-and they make up at least half of today's "known" answers.
+and they make up at least half of today's "known" answers. Answers on
+"Typen op tijd" decks never count: answering those fast is the point.
 
 ### 7.2 Children
 Create, rename, set avatar/colour, set the time limit per sum, archive,
