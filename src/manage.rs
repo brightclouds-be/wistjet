@@ -587,6 +587,9 @@ pub struct ChildOverview {
     pub reviewed: i64,
     pub known: i64,
     pub not_known: i64,
+    /// "Known" answers today given within 2 seconds of the previous answer: clicking
+    /// through without thinking (spec §7.1).
+    pub rushed: i64,
     /// Active card directions per box position, over all decks (spec §7.1).
     pub boxes: Vec<i64>,
 }
@@ -635,6 +638,14 @@ pub fn overview(conn: &Connection, today: NaiveDate) -> Result<Vec<ChildOverview
                 params![child_id, today],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
+            let rushed = conn.query_row(
+                "SELECT count(*) FROM (
+                   SELECT known, (julianday(at) - lag(julianday(at)) OVER (ORDER BY julianday(at))) * 86400 AS gap
+                   FROM review_log WHERE child_id = ?1 AND local_date = ?2)
+                 WHERE known AND gap < 2",
+                params![child_id, today],
+                |r| r.get(0),
+            )?;
             Ok(ChildOverview {
                 child_id,
                 name,
@@ -643,6 +654,7 @@ pub fn overview(conn: &Connection, today: NaiveDate) -> Result<Vec<ChildOverview
                 reviewed,
                 known,
                 not_known: reviewed - known,
+                rushed,
                 boxes,
             })
         })
@@ -1157,9 +1169,35 @@ mod tests {
                 reviewed: 2,
                 known: 1,
                 not_known: 1,
+                rushed: 0,
                 boxes: vec![9, 1],
             }]
         );
+    }
+
+    #[test]
+    fn overview_counts_known_answers_given_within_two_seconds() {
+        let mut conn = db::open_in_memory().unwrap();
+        family(&mut conn);
+        let answers = [
+            ("a1", 1, true, "09:00:00"),
+            ("a2", 2, true, "09:00:01.5"), // fast
+            ("a3", 3, true, "09:00:03"),   // fast
+            ("a4", 4, false, "09:00:04"),  // fast, but honest "nog niet"
+            ("a5", 5, true, "09:00:09"),   // took its time
+        ];
+        for (id, card_id, known, at) in answers {
+            let a = Answer {
+                id: id.into(),
+                child_id: 1,
+                card_id,
+                direction: 0,
+                known,
+            };
+            let now = format!("2026-10-18T{at}Z").parse().unwrap();
+            record_answer(&mut conn, &a, now, d(TODAY)).unwrap();
+        }
+        assert_eq!(overview(&conn, d(TODAY)).unwrap()[0].rushed, 2);
     }
 
     #[test]

@@ -23,6 +23,11 @@
           <div><dt>Wist het</dt><dd>{c.known}</dd></div>
           <div><dt>Nog niet</dt><dd>{c.not_known}</dd></div>
         </dl>
+        {#if c.rushed >= 5 && c.rushed * 2 >= c.known}
+          <p class="rushed">
+            ⚠ Vandaag {c.rushed} van de {c.known} keer "Wist ik" binnen 2 seconden. Klikt {c.name} snel door?
+          </p>
+        {/if}
         {#if c.boxes.length > 0}
           <h3>Kaartjes per bakje</h3>
           <ul class="box-counts">

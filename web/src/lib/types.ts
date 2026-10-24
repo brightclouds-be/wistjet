@@ -41,6 +41,7 @@ export type ChildOverview = {
   reviewed: number
   known: number
   not_known: number
+  rushed: number
   boxes: number[]
 }
 export type Settings = { name: string; timezone: string; default_system_id: number }

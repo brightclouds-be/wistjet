@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { answer, newId, skip, start, type StudyCard } from './session.ts'
+import { answer, newId, skip, start, typedRight, type StudyCard } from './session.ts'
 
 function card(card_id: number, repeat_missed = true): StudyCard {
   const side = { text: `kaart ${card_id}`, image: null }
@@ -66,4 +66,43 @@ test('a card the server no longer has is skipped without counting', () => {
   assert.deepEqual(q.summary, { known: 0, notKnown: 0, repeats: 0 })
   q = skip(skip(q))
   assert.equal(q.index, 2)
+})
+
+test('about one in five first showings asks to type the answer', () => {
+  const rolls = [0.1, 0.5, 0.19, 0.2]
+  const q = start([card(1), card(2), card(3), card(4)], ids, () => rolls.shift()!)
+  assert.deepEqual(
+    q.turns.map((t) => t.check),
+    [true, false, true, false],
+  )
+})
+
+test('only short text answers are typed', () => {
+  const long = { ...card(1), answer: { text: 'een heel lang antwoord dat niemand zo kan typen', image: null } }
+  const picture = { ...card(2), answer: { text: '', image: 7 } }
+  const q = start([long, picture], ids, () => 0)
+  assert.deepEqual(
+    q.turns.map((t) => t.check),
+    [false, false],
+  )
+})
+
+test('repeats of missed cards are never typed', () => {
+  let q = start([card(1)], ids, () => 0)
+  q = answer(q, false)
+  assert.equal(q.turns[1].check, false)
+})
+
+test('a typed answer ignores case, accents, punctuation and spaces', () => {
+  assert.ok(typedRight(' Été! ', 'été'))
+  assert.ok(typedRight('la fenetre', 'la fenêtre'))
+  assert.ok(!typedRight('la fentre', 'la fenêtre'))
+  assert.ok(!typedRight('', 'chat'))
+})
+
+test('a typed answer may be any one of the listed answers', () => {
+  assert.ok(typedRight('de hond', 'de hond, het hondje'))
+  assert.ok(!typedRight('hond', 'de hond, het hondje'))
+  assert.ok(typedRight('het hondje', 'de hond / het hondje'))
+  assert.ok(typedRight('de hond, het hondje', 'de hond, het hondje'))
 })

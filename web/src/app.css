@@ -444,6 +444,25 @@ h2 {
   background: var(--yes);
 }
 
+.answer-buttons .type-answer {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+}
+
+.typed {
+  font-weight: 600;
+  margin: 0;
+}
+
+.typed.yes {
+  color: var(--yes);
+}
+
+.typed.no {
+  color: var(--no);
+}
+
 .summary {
   text-align: center;
 }
@@ -745,6 +764,11 @@ tr.skipped td:last-child {
 
 .overview .greeting {
   font-size: 1.3rem;
+}
+
+.rushed {
+  color: var(--no);
+  font-weight: 600;
 }
 
 .stats {

@@ -169,13 +169,24 @@ await sleep(800)
 check((await text()).includes('3 kaartjes om te oefenen'), 'the child sees 3 cards due')
 check(/Zo ver ben je[\s\S]*vandaag: elke dag/.test(await text()), 'the home screen shows the boxes and today\'s box')
 await shot('child-home')
+// Only the second card asks to type its answer.
+await js(`(() => { const rolls = [0.5, 0.1]; Math.random = () => rolls.shift() ?? 0.5 })()`)
 await click('Start met oefenen')
 check((await text()).includes('1 van 3'), 'the session starts at 1 van 3')
 await key(' ')
 await shot('study')
 await key('ArrowLeft') // not known: comes back at the end
 check((await text()).includes('2 van 4'), 'a missed card comes back at the end')
-for (let i = 0; i < 3; i++) {
+await key(' ')
+check((await text()).includes('Typ je antwoord'), 'a check card asks to type the answer, space does not skip it')
+const pairs = { 'le chat': 'de kat', 'le chien': 'de hond', 'la maison': 'het huis' }
+const question = await js(`document.querySelector('.card-text').textContent`)
+const right = pairs[question] ?? Object.keys(pairs).find((k) => pairs[k] === question)
+await type('.type-answer input', right.toUpperCase())
+await click('Controleer')
+check((await text()).includes('Goed getypt!'), 'the typed answer is checked')
+await click('Verder')
+for (let i = 0; i < 2; i++) {
   await key(' ')
   await key('ArrowRight')
 }

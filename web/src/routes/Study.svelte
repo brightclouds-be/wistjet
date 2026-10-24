@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { api, ApiError } from '../lib/api'
-  import { answer, skip, start, type Queue, type Side, type StudyCard } from '../lib/session'
+  import { answer, skip, start, typedRight, type Queue, type Side, type StudyCard } from '../lib/session'
   import BoxBars, { type SubjectBoxes } from '../components/BoxBars.svelte'
 
   let { childId, subject }: { childId: number; subject: number | null } = $props()
@@ -15,18 +15,34 @@
   let stopped = $state(false)
   /** Cards that went to a later box this session, for the summary. */
   let movedUp = $state(0)
+  /** On a check turn: what the child typed, and whether it was right once checked. */
+  let typed = $state('')
+  let typedOk = $state<boolean | null>(null)
   let buttons = $state<HTMLDivElement>()
 
   /** Buttons are swapped on every step; put focus on the new first one so keyboard and
    *  switch users don't have to find their way back from the top of the page. */
   async function focusButtons() {
     await tick()
-    buttons?.querySelector('button')?.focus()
+    buttons?.querySelector<HTMLElement>('input, button')?.focus()
   }
 
   function reveal() {
     revealed = true
     focusButtons()
+  }
+
+  function check(e: SubmitEvent) {
+    e.preventDefault()
+    if (!turn) return
+    typedOk = typedRight(typed, turn.card.answer.text)
+    reveal()
+  }
+
+  function nextCard() {
+    revealed = false
+    typed = ''
+    typedOk = null
   }
 
   $effect(() => {
@@ -65,7 +81,7 @@
         if (err instanceof ApiError && err.status === 404) {
           // Archived or unassigned meanwhile: there is nothing left to save, move on.
           unsaved = null
-          revealed = false
+          nextCard()
           if (queue) queue = skip(queue)
           focusButtons()
           return
@@ -77,7 +93,7 @@
       }
     }
     unsaved = null
-    revealed = false
+    nextCard()
     queue = answer(queue, known)
     focusButtons()
   }
@@ -85,6 +101,8 @@
   function onkeydown(e: KeyboardEvent) {
     // Alt/Cmd/Ctrl+arrow is browser navigation, never an answer.
     if (finished || !turn || e.altKey || e.metaKey || e.ctrlKey) return
+    // Typing the answer, or a typed answer that decides for itself: no shortcuts.
+    if (turn.check) return
     if (e.key === ' ') {
       // Never let space also "click" a focused answer button.
       e.preventDefault()
@@ -142,6 +160,11 @@
     <section class="flashcard" aria-live="polite">
       {@render side(turn.card.question)}
       {#if revealed}
+        {#if typedOk === true}
+          <p class="typed yes">✓ Goed getypt!</p>
+        {:else if typedOk === false}
+          <p class="typed no">Je typte: <strong>{typed.trim() || '(niets)'}</strong></p>
+        {/if}
         <hr />
         {@render side(turn.card.answer)}
         {#if turn.card.notes}<p class="notes">{turn.card.notes}</p>{/if}
@@ -152,8 +175,20 @@
       {#if unsaved !== null}
         <p class="error" role="alert">Dat lukte even niet. Probeer het nog eens.</p>
         <button disabled={saving} onclick={() => respond(unsaved!)}>Opnieuw proberen</button>
+      {:else if turn.check && !revealed}
+        <form class="type-answer" onsubmit={check}>
+          <label>
+            Typ je antwoord
+            <input bind:value={typed} autocomplete="off" autocapitalize="off" spellcheck="false" />
+          </label>
+          <button>Controleer</button>
+        </form>
       {:else if !revealed}
         <button class="reveal" onclick={reveal}>Toon antwoord</button>
+      {:else if typedOk !== null}
+        <button class={typedOk ? 'yes' : 'no'} disabled={saving} onclick={() => respond(typedOk!)}>
+          Verder
+        </button>
       {:else}
         <button class="no" disabled={saving} onclick={() => respond(false)}>Wist ik niet</button>
         <button class="yes" disabled={saving} onclick={() => respond(true)}>Wist ik</button>

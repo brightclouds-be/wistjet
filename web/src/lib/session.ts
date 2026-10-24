@@ -14,8 +14,9 @@ export type StudyCard = {
 }
 
 /** One showing of a card. First showings carry the id the server records the answer
- *  under; repeats of missed cards are practice (spec §5.4) and are never sent. */
-export type Turn = { card: StudyCard; answerId: string | null }
+ *  under; repeats of missed cards are practice (spec §5.4) and are never sent. `check`
+ *  turns ask the child to type the answer instead of judging it themselves (spec §6.3). */
+export type Turn = { card: StudyCard; answerId: string | null; check: boolean }
 
 export type Summary = { known: number; notKnown: number; repeats: number }
 
@@ -28,9 +29,16 @@ export function newId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-export function start(cards: StudyCard[], id: () => string = newId): Queue {
+/** Answers short enough to type; longer ones are never checked. */
+const TYPEABLE = 40
+
+export function start(cards: StudyCard[], id: () => string = newId, roll = Math.random): Queue {
   return {
-    turns: cards.map((card) => ({ card, answerId: id() })),
+    turns: cards.map((card) => {
+      const text = card.answer.text.trim()
+      const check = roll() < 0.2 && text !== '' && text.length <= TYPEABLE
+      return { card, answerId: id(), check }
+    }),
     index: 0,
     summary: { known: 0, notKnown: 0, repeats: 0 },
   }
@@ -47,7 +55,7 @@ export function answer(q: Queue, known: boolean): Queue {
   else s.notKnown += 1
   const repeat = !known && turn.card.repeat_missed
   return {
-    turns: repeat ? [...q.turns, { card: turn.card, answerId: null }] : q.turns,
+    turns: repeat ? [...q.turns, { card: turn.card, answerId: null, check: false }] : q.turns,
     index: q.index + 1,
     summary: s,
   }
@@ -57,4 +65,19 @@ export function answer(q: Queue, known: boolean): Queue {
  *  this child (archived or unassigned meanwhile), so its answer can never be saved. */
 export function skip(q: Queue): Queue {
   return q.index < q.turns.length ? { ...q, index: q.index + 1 } : q
+}
+
+const plain = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+
+/** Whether a typed answer matches the card's answer, or one of the answers it lists
+ *  ("de hond, het hondje"). Case, accents and punctuation don't count. */
+export function typedRight(typed: string, answer: string): boolean {
+  const t = plain(typed)
+  return t !== '' && [answer, ...answer.split(/[,;/]/)].some((a) => plain(a) === t)
 }
